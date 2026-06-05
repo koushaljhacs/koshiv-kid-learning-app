@@ -1,0 +1,32 @@
+# Developer Name: Koushal Jha
+# Developer Email: koushaljha.cs@gmail.com
+# Project Name: koshiv - Learning App for Kids
+# Role: Docker Engineer
+# Original File Version: 1.0.0.0.0
+# Complete Version Tracing:
+# Version 1.0.0.0.0 | Commit: _________ | Initial .gitignore creation — excluding sensitive .env files, OS artifacts, and IDE configs
+#
+# Aim: Git Ignore Rules
+# Why: Prevents accidental exposure of sensitive credentials (.env),
+#      operating system generated files (Thumbs.db, .DS_Store), and
+#      IDE-specific configurations (.vscode/, .idea/) from being committed
+#      to version control. The .env file contains real database passwords
+#      and Tailscale IP — its exclusion is a security requirement per
+#      Sovereign Rulebook. .env.example with dummy values will be committed
+#      instead for developer reference.
+
+# Sensitive Environment Files (CRITICAL)
+.env
+*.env
+!*.env.example
+
+# OS Generated Files
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# IDE Configurations
+.vscode/
+.idea/
+*.swp
+*.swo
