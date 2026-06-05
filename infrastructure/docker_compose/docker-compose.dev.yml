@@ -6,6 +6,7 @@
 # Complete Version Tracing:
 # Version 1.0.0.0.0 | Commit: 2e110a4 | Initial development environment setup — PostgreSQL 16, PgAdmin4, Redis 7
 # Version 1.0.0.0.1 | Commit: 27f0006 | Added PostgreSQL 16 service with fully parameterized environment variables — zero hardcoded values
+# Version 1.0.0.0.2 | Commit: _________ | Added PgAdmin4 service for PostgreSQL visual administration with Tailscale IP binding
 
 # -------------------------------------------------------------------------
 # Aim: koshiv Development Environment Docker Compose
@@ -61,15 +62,65 @@ services:
           cpus: ${KOSHIV_POSTGRES_DEV_CPU_RESERVATION}
           memory: ${KOSHIV_POSTGRES_DEV_MEMORY_RESERVATION}
 
+  # -----------------------------------------------------------------------
+  # Aim: PgAdmin4 Web-Based PostgreSQL Administration Interface
+  # Why: Provides a browser-based GUI for database management — schema
+  #      browsing, query execution, user management, and data visualization.
+  #      Essential during development for debugging queries, inspecting
+  #      table structures, and monitoring database health without needing
+  #      CLI access to the container. Bound strictly to Tailscale private
+  #      IP with a custom high port (above 30000) to prevent exposure on
+  #      default PgAdmin port 80/5050. Admin credentials, container name,
+  #      restart policy, and all configurable parameters sourced from
+  #      environment variables — no hardcoded secrets in version control.
+  # -----------------------------------------------------------------------
+  pgadmin4_koshiv_dev:
+    image: dpage/pgadmin4:latest
+    container_name: ${KOSHIV_PGADMIN_DEV_CONTAINER_NAME}
+    restart: ${KOSHIV_PGADMIN_DEV_RESTART_POLICY}
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${KOSHIV_PGADMIN_DEV_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${KOSHIV_PGADMIN_DEV_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "${KOSHIV_TAILSCALE_IP}:${KOSHIV_PGADMIN_DEV_PORT}:80"
+    volumes:
+      - ${KOSHIV_PGADMIN_DEV_VOLUME_NAME}:/var/lib/pgadmin
+      - ../../database_layer/pgadmin_setup/servers.json:/pgadmin4/servers.json:ro
+    networks:
+      - ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}
+    depends_on:
+      postgres_koshiv_dev:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/misc/ping || exit 1"]
+      interval: ${KOSHIV_PGADMIN_DEV_HEALTHCHECK_INTERVAL}
+      timeout: ${KOSHIV_PGADMIN_DEV_HEALTHCHECK_TIMEOUT}
+      retries: ${KOSHIV_PGADMIN_DEV_HEALTHCHECK_RETRIES}
+      start_period: ${KOSHIV_PGADMIN_DEV_HEALTHCHECK_START_PERIOD}
+    deploy:
+      resources:
+        limits:
+          cpus: ${KOSHIV_PGADMIN_DEV_CPU_LIMIT}
+          memory: ${KOSHIV_PGADMIN_DEV_MEMORY_LIMIT}
+        reservations:
+          cpus: ${KOSHIV_PGADMIN_DEV_CPU_RESERVATION}
+          memory: ${KOSHIV_PGADMIN_DEV_MEMORY_RESERVATION}
+
 # -------------------------------------------------------------------------
 # Aim: Named Volumes
 # Why: Persistent data storage decoupled from container lifecycle. Volume
 #      names sourced from environment variables allow per-environment
-#      isolation — dev, staging, production volumes never collide.
+#      isolation — dev, staging, production volumes never collide. Each
+#      service gets its own dedicated volume for data integrity.
 # -------------------------------------------------------------------------
 volumes:
   ${KOSHIV_POSTGRES_DEV_VOLUME_NAME}:
     name: ${KOSHIV_POSTGRES_DEV_VOLUME_NAME}
+    driver: local
+  ${KOSHIV_PGADMIN_DEV_VOLUME_NAME}:
+    name: ${KOSHIV_PGADMIN_DEV_VOLUME_NAME}
     driver: local
 
 # -------------------------------------------------------------------------
@@ -77,7 +128,9 @@ volumes:
 # Why: All koshiv services communicate strictly over this isolated bridge
 #      network. External access only via Tailscale private IP — no service
 #      ever binds to 0.0.0.0 or 127.0.0.1. Network name from variable
-#      ensures environment-specific isolation.
+#      ensures environment-specific isolation. Single shared network allows
+#      inter-service communication (e.g., PgAdmin → PostgreSQL) without
+#      exposing ports publicly.
 # -------------------------------------------------------------------------
 networks:
   ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}:
