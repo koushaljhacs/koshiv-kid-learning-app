@@ -6,16 +6,18 @@
 # Complete Version Tracing:
 # Version 1.0.0.0.0 | Commit: 2e110a4 | Initial development environment setup — PostgreSQL 16, PgAdmin4, Redis 7
 # Version 1.0.0.0.1 | Commit: 27f0006 | Added PostgreSQL 16 service with fully parameterized environment variables — zero hardcoded values
-# Version 1.0.0.0.2 | Commit: _________ | Added PgAdmin4 service for PostgreSQL visual administration with Tailscale IP binding
+# Version 1.0.0.0.2 | Commit: 5309637 | Added PgAdmin4 service for PostgreSQL visual administration with Tailscale IP binding
+# Version 1.0.0.0.3 | Commit: _________ | Added Redis 7 caching service with password authentication and AOF persistence — all parameters environment-driven
 
 # -------------------------------------------------------------------------
 # Aim: koshiv Development Environment Docker Compose
 # Why: Isolated local development stack running strictly over Tailscale
-#      private network (100.81.13.80). Every configurable value extracted
-#      into environment variables — zero hardcoded IPs, ports, container
-#      names, or credentials. This ensures the compose file remains
-#      environment-agnostic and secure even when stored in version control.
-#      Services communicate internally via koshiv_tailscale_dev_net bridge.
+#      private network. Every configurable value extracted into environment
+#      variables — zero hardcoded IPs, ports, container names, credentials,
+#      or resource limits. This ensures the compose file remains environment-
+#      agnostic, secure even when stored in version control, and deployable
+#      across dev/staging/production by simply swapping the .env file.
+#      Services communicate internally via isolated bridge network.
 # -------------------------------------------------------------------------
 
 services:
@@ -108,12 +110,67 @@ services:
           cpus: ${KOSHIV_PGADMIN_DEV_CPU_RESERVATION}
           memory: ${KOSHIV_PGADMIN_DEV_MEMORY_RESERVATION}
 
+  # -----------------------------------------------------------------------
+  # Aim: Redis 7 In-Memory Caching & Session Store
+  # Why: High-performance in-memory data store for koshiv platform. Handles
+  #      session management (student login sessions with TTL), API response
+  #      caching (reducing PostgreSQL load for repeated queries), and rate
+  #      limiting counters. Redis 7 chosen for its improved memory efficiency
+  #      and AOF (Append-Only File) persistence — ensures cache data survives
+  #      container restarts. Password authentication mandatory even in dev
+  #      environment — prevents accidental unprotected cache access. Bound
+  #      strictly to Tailscale private IP with custom high port above 30000
+  #      to avoid default 6379 port scanning. All parameters — IP, port,
+  #      password, container name, restart policy, persistence settings,
+  #      healthcheck intervals, and resource limits — sourced from environment
+  #      variables. Zero hardcoded values ensure security compliance across
+  #      all deployment environments.
+  # -----------------------------------------------------------------------
+  redis_koshiv_dev:
+    image: redis:7-alpine
+    container_name: ${KOSHIV_REDIS_DEV_CONTAINER_NAME}
+    restart: ${KOSHIV_REDIS_DEV_RESTART_POLICY}
+    command: >
+      redis-server
+      --port ${KOSHIV_REDIS_DEV_INTERNAL_PORT}
+      --requirepass ${KOSHIV_REDIS_DEV_PASSWORD}
+      --appendonly yes
+      --appendfsync ${KOSHIV_REDIS_DEV_AOF_FSYNC_POLICY}
+      --maxmemory ${KOSHIV_REDIS_DEV_MAXMEMORY}
+      --maxmemory-policy ${KOSHIV_REDIS_DEV_EVICTION_POLICY}
+      --save ""
+      --databases ${KOSHIV_REDIS_DEV_DATABASES}
+      --tcp-backlog ${KOSHIV_REDIS_DEV_TCP_BACKLOG}
+      --timeout ${KOSHIV_REDIS_DEV_CLIENT_TIMEOUT}
+      --tcp-keepalive ${KOSHIV_REDIS_DEV_TCP_KEEPALIVE}
+    ports:
+      - "${KOSHIV_TAILSCALE_IP}:${KOSHIV_REDIS_DEV_PORT}:${KOSHIV_REDIS_DEV_INTERNAL_PORT}"
+    volumes:
+      - ${KOSHIV_REDIS_DEV_VOLUME_NAME}:/data
+    networks:
+      - ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p ${KOSHIV_REDIS_DEV_INTERNAL_PORT} -a ${KOSHIV_REDIS_DEV_PASSWORD} ping | grep PONG"]
+      interval: ${KOSHIV_REDIS_DEV_HEALTHCHECK_INTERVAL}
+      timeout: ${KOSHIV_REDIS_DEV_HEALTHCHECK_TIMEOUT}
+      retries: ${KOSHIV_REDIS_DEV_HEALTHCHECK_RETRIES}
+      start_period: ${KOSHIV_REDIS_DEV_HEALTHCHECK_START_PERIOD}
+    deploy:
+      resources:
+        limits:
+          cpus: ${KOSHIV_REDIS_DEV_CPU_LIMIT}
+          memory: ${KOSHIV_REDIS_DEV_MEMORY_LIMIT}
+        reservations:
+          cpus: ${KOSHIV_REDIS_DEV_CPU_RESERVATION}
+          memory: ${KOSHIV_REDIS_DEV_MEMORY_RESERVATION}
+
 # -------------------------------------------------------------------------
 # Aim: Named Volumes
 # Why: Persistent data storage decoupled from container lifecycle. Volume
 #      names sourced from environment variables allow per-environment
 #      isolation — dev, staging, production volumes never collide. Each
-#      service gets its own dedicated volume for data integrity.
+#      service gets its own dedicated volume for data integrity. Local
+#      driver explicitly declared for clarity and auditability.
 # -------------------------------------------------------------------------
 volumes:
   ${KOSHIV_POSTGRES_DEV_VOLUME_NAME}:
@@ -122,6 +179,9 @@ volumes:
   ${KOSHIV_PGADMIN_DEV_VOLUME_NAME}:
     name: ${KOSHIV_PGADMIN_DEV_VOLUME_NAME}
     driver: local
+  ${KOSHIV_REDIS_DEV_VOLUME_NAME}:
+    name: ${KOSHIV_REDIS_DEV_VOLUME_NAME}
+    driver: local
 
 # -------------------------------------------------------------------------
 # Aim: Tailscale Private Bridge Network
@@ -129,8 +189,9 @@ volumes:
 #      network. External access only via Tailscale private IP — no service
 #      ever binds to 0.0.0.0 or 127.0.0.1. Network name from variable
 #      ensures environment-specific isolation. Single shared network allows
-#      inter-service communication (e.g., PgAdmin → PostgreSQL) without
-#      exposing ports publicly.
+#      inter-service communication (e.g., PgAdmin → PostgreSQL, Backend →
+#      Redis) without exposing ports publicly. Bridge driver explicitly
+#      declared for clarity and auditability.
 # -------------------------------------------------------------------------
 networks:
   ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}:
