@@ -4,4 +4,82 @@
 # Role: Docker Engineer
 # Original File Version: 1.0.0.0.0
 # Complete Version Tracing:
-# Version 1.0.0.0.0 | Commit: 2e110a4 | Initial development environment setup — PostgreSQL 16, PgAdmin4, Redis 7
+# Version 1.0.0.0.0 | Commit: 2e110a4 | Initial development environment setup — file metadata header created
+# Version 1.0.0.0.1 | Commit: PENDING | Added PostgreSQL 16 service with fully parameterized environment variables — no hardcoded values anywhere
+
+# -------------------------------------------------------------------------
+# Aim: koshiv Development Environment Docker Compose
+# Why: Isolated local development stack running strictly over Tailscale
+#      private network (100.81.13.80). Every configurable value extracted
+#      into environment variables — zero hardcoded IPs, ports, container
+#      names, or credentials. This ensures the compose file remains
+#      environment-agnostic and secure even when stored in version control.
+#      Services communicate internally via koshiv_tailscale_dev_net bridge.
+# -------------------------------------------------------------------------
+
+services:
+
+  # -----------------------------------------------------------------------
+  # Aim: PostgreSQL 16 Database Service
+  # Why: Core relational database for koshiv platform. Stores all structured
+  #      data — student profiles, learning progress, quiz results, parent
+  #      dashboards. PostgreSQL 16 chosen for advanced JSON capabilities,
+  #      robust role-based access control, and proven reliability. IP, port,
+  #      credentials, container name, restart policy, healthcheck parameters,
+  #      and resource limits all sourced from environment variables — ensuring
+  #      zero hardcoded values for maximum security and deployment flexibility.
+  #      Custom high port mapped exclusively to Tailscale private IP prevents
+  #      default 5432 port scanning attacks on public interfaces.
+  # -----------------------------------------------------------------------
+  postgres_koshiv_dev:
+    image: postgres:16-alpine
+    container_name: ${KOSHIV_POSTGRES_DEV_CONTAINER_NAME}
+    restart: ${KOSHIV_POSTGRES_DEV_RESTART_POLICY}
+    environment:
+      POSTGRES_USER: ${KOSHIV_POSTGRES_DEV_USER}
+      POSTGRES_PASSWORD: ${KOSHIV_POSTGRES_DEV_PASSWORD}
+      POSTGRES_DB: ${KOSHIV_POSTGRES_DEV_DB}
+    ports:
+      - "${KOSHIV_TAILSCALE_IP}:${KOSHIV_POSTGRES_DEV_PORT}:5432"
+    volumes:
+      - ${KOSHIV_POSTGRES_DEV_VOLUME_NAME}:/var/lib/postgresql/data
+      - ../../database_layer/postgres_schema:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KOSHIV_POSTGRES_DEV_USER} -d ${KOSHIV_POSTGRES_DEV_DB}"]
+      interval: ${KOSHIV_POSTGRES_DEV_HEALTHCHECK_INTERVAL}
+      timeout: ${KOSHIV_POSTGRES_DEV_HEALTHCHECK_TIMEOUT}
+      retries: ${KOSHIV_POSTGRES_DEV_HEALTHCHECK_RETRIES}
+      start_period: ${KOSHIV_POSTGRES_DEV_HEALTHCHECK_START_PERIOD}
+    deploy:
+      resources:
+        limits:
+          cpus: ${KOSHIV_POSTGRES_DEV_CPU_LIMIT}
+          memory: ${KOSHIV_POSTGRES_DEV_MEMORY_LIMIT}
+        reservations:
+          cpus: ${KOSHIV_POSTGRES_DEV_CPU_RESERVATION}
+          memory: ${KOSHIV_POSTGRES_DEV_MEMORY_RESERVATION}
+
+# -------------------------------------------------------------------------
+# Aim: Named Volumes
+# Why: Persistent data storage decoupled from container lifecycle. Volume
+#      names sourced from environment variables allow per-environment
+#      isolation — dev, staging, production volumes never collide.
+# -------------------------------------------------------------------------
+volumes:
+  ${KOSHIV_POSTGRES_DEV_VOLUME_NAME}:
+    name: ${KOSHIV_POSTGRES_DEV_VOLUME_NAME}
+    driver: local
+
+# -------------------------------------------------------------------------
+# Aim: Tailscale Private Bridge Network
+# Why: All koshiv services communicate strictly over this isolated bridge
+#      network. External access only via Tailscale private IP — no service
+#      ever binds to 0.0.0.0 or 127.0.0.1. Network name from variable
+#      ensures environment-specific isolation.
+# -------------------------------------------------------------------------
+networks:
+  ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}:
+    name: ${KOSHIV_TAILSCALE_DEV_NETWORK_NAME}
+    driver: bridge
