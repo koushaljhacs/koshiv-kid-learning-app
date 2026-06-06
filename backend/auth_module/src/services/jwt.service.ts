@@ -9,20 +9,40 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial JWT service — RS256 asymmetric, access token 15min, refresh token 7d
+ * Version 1.0.1 | Fix: verifyAccessToken now uses public key exclusively, added Pino logging
  *
  * Aim: JWT Token Generation & Verification Service
  * Why: Generates RS256-signed Access Tokens (15 min TTL) and Refresh Tokens
- *      (7 day TTL) using private key. Spring Boot services verify using
- *      public key. Zero shared secrets — fully asymmetric.
+ *      (7 day TTL) using private key. Verification uses public key only.
+ *      Zero shared secrets — fully asymmetric. Spring Boot services verify
+ *      using the same public key.
  * ============================================================
  */
 
 import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
+import pino from 'pino';
+
+const logger = pino({
+  transport: {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      translateTime: 'SYS:yyyy-mm-dd HH:MM:ss',
+      ignore: 'pid,hostname',
+    },
+  },
+  level: process.env.LOG_LEVEL || 'debug',
+});
 
 const privateKey = fs.readFileSync(
   path.join(__dirname, '../../keys/private.pem'),
+  'utf8',
+);
+
+const publicKey = fs.readFileSync(
+  path.join(__dirname, '../../keys/public.pem'),
   'utf8',
 );
 
@@ -30,7 +50,7 @@ const ACCESS_TOKEN_TTL = '15m';
 const REFRESH_TOKEN_TTL = '7d';
 
 export interface TokenPayload {
-  sub: string; // user_id
+  sub: string;
   role: 'parent' | 'child';
   email?: string;
   handle?: string;
@@ -47,6 +67,8 @@ export interface TokenPair {
  * Refresh Token: 7 days, contains only user_id for re-issuance.
  */
 export const generateTokenPair = (payload: TokenPayload): TokenPair => {
+  logger.info({ sub: payload.sub, role: payload.role }, 'Generating token pair');
+
   const accessToken = jwt.sign(payload, privateKey, {
     algorithm: 'RS256',
     expiresIn: ACCESS_TOKEN_TTL,
@@ -65,6 +87,7 @@ export const generateTokenPair = (payload: TokenPayload): TokenPair => {
     },
   );
 
+  logger.debug({ sub: payload.sub }, 'Token pair generated successfully');
   return { accessToken, refreshToken };
 };
 
@@ -72,23 +95,36 @@ export const generateTokenPair = (payload: TokenPayload): TokenPair => {
  * Generate only an Access Token (for re-authentication flows).
  */
 export const generateAccessToken = (payload: TokenPayload): string => {
-  return jwt.sign(payload, privateKey, {
+  logger.info({ sub: payload.sub }, 'Generating access token');
+
+  const accessToken = jwt.sign(payload, privateKey, {
     algorithm: 'RS256',
     expiresIn: ACCESS_TOKEN_TTL,
     issuer: 'koshiv-auth',
     subject: payload.sub,
   });
+
+  logger.debug({ sub: payload.sub }, 'Access token generated successfully');
+  return accessToken;
 };
 
 /**
- * Verify Access Token and return decoded payload.
+ * Verify Access Token using PUBLIC KEY and return decoded payload.
  * Throws if token is invalid or expired — caller must handle.
  */
 export const verifyAccessToken = (token: string): TokenPayload => {
-  const decoded = jwt.verify(token, privateKey, {
-    algorithms: ['RS256'],
-    issuer: 'koshiv-auth',
-  });
+  logger.debug('Verifying access token');
 
-  return decoded as TokenPayload;
+  try {
+    const decoded = jwt.verify(token, publicKey, {
+      algorithms: ['RS256'],
+      issuer: 'koshiv-auth',
+    });
+
+    logger.debug({ sub: (decoded as TokenPayload).sub }, 'Token verified successfully');
+    return decoded as TokenPayload;
+  } catch (error) {
+    logger.error({ err: error }, 'Token verification failed');
+    throw error;
+  }
 };

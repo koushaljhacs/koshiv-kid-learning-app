@@ -9,6 +9,7 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial FIDO2/WebAuthn service — registration options generation and response verification scaffolding
+ * Version 1.0.1 | Fix: Replaced 'any' with RegistrationResponseJSON type, added Pino logging
  *
  * Aim: FIDO2 / WebAuthn Service for Parent Authentication
  * Why: Generates WebAuthn registration options for parent biometric/PIN
@@ -25,7 +26,21 @@ import {
 import type {
   GenerateRegistrationOptionsOpts,
   VerifyRegistrationResponseOpts,
+  RegistrationResponseJSON,
 } from '@simplewebauthn/server';
+import pino from 'pino';
+
+const logger = pino({
+  transport: {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      translateTime: 'SYS:yyyy-mm-dd HH:MM:ss',
+      ignore: 'pid,hostname',
+    },
+  },
+  level: process.env.LOG_LEVEL || 'debug',
+});
 
 const rpID = process.env.RP_ID || 'localhost';
 const rpName = 'koshiv - Sovereign Edu Platform';
@@ -39,6 +54,8 @@ export const generateFido2RegistrationOptions = async (
   userId: string,
   userEmail: string,
 ): Promise<ReturnType<typeof generateRegistrationOptions>> => {
+  logger.info({ userId, userEmail }, 'Generating FIDO2 registration options');
+
   const options: GenerateRegistrationOptionsOpts = {
     rpName,
     rpID,
@@ -53,6 +70,7 @@ export const generateFido2RegistrationOptions = async (
 
   const registrationOptions = await generateRegistrationOptions(options);
 
+  logger.debug({ userId }, 'FIDO2 registration options generated successfully');
   return registrationOptions;
 };
 
@@ -61,9 +79,11 @@ export const generateFido2RegistrationOptions = async (
  * Returns verification result with registration info on success.
  */
 export const verifyFido2RegistrationResponse = async (
-  response: any,
+  response: RegistrationResponseJSON,
   expectedChallenge: string,
 ): Promise<ReturnType<typeof verifyRegistrationResponse>> => {
+  logger.info('Verifying FIDO2 registration response');
+
   const verificationOptions: VerifyRegistrationResponseOpts = {
     response,
     expectedChallenge,
@@ -71,7 +91,12 @@ export const verifyFido2RegistrationResponse = async (
     expectedRPID: rpID,
   };
 
-  const verification = await verifyRegistrationResponse(verificationOptions);
-
-  return verification;
+  try {
+    const verification = await verifyRegistrationResponse(verificationOptions);
+    logger.info({ verified: verification.verified }, 'FIDO2 verification completed');
+    return verification;
+  } catch (error) {
+    logger.error({ err: error }, 'FIDO2 verification failed');
+    throw error;
+  }
 };

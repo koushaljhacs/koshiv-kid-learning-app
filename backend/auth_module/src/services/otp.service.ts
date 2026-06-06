@@ -8,7 +8,8 @@
  * File: src/services/otp.service.ts
  * Original File Version: 1.0.0
  * Complete Version Tracing:
- * Version 1.0.0 | Commit: <commit-hash> | Initial OTP service — Redis-backed, 5-min TTL, crypto random generation
+ * Version 1.0.0 | Initial OTP service — Redis-backed, 5-min TTL, crypto random generation
+ * Version 1.0.1 | Fix: Added Pino structured logging across all functions
  *
  * Aim: OTP Generation & Validation Service
  * Why: Handles secure OTP generation (6-digit, cryptographically random)
@@ -20,8 +21,21 @@
 
 import crypto from 'crypto';
 import redis from '../config/redis';
+import pino from 'pino';
 
-const OTP_TTL_SECONDS = 300; // 5 minutes
+const logger = pino({
+  transport: {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      translateTime: 'SYS:yyyy-mm-dd HH:MM:ss',
+      ignore: 'pid,hostname',
+    },
+  },
+  level: process.env.LOG_LEVEL || 'debug',
+});
+
+const OTP_TTL_SECONDS = 300;
 const OTP_LENGTH = 6;
 
 /**
@@ -38,12 +52,13 @@ export const generateOtp = (): { rawOtp: string; hashedOtp: string } => {
     .update(rawOtp)
     .digest('hex');
 
+  logger.debug('OTP generated successfully');
   return { rawOtp, hashedOtp };
 };
 
 /**
  * Store hashed OTP in Redis with 5-minute TTL.
- * Key format: otp:<identifier> (e.g., otp:parent@example.com, otp:childhandle)
+ * Key format: otp:<identifier>
  */
 export const storeOtp = async (
   identifier: string,
@@ -51,6 +66,7 @@ export const storeOtp = async (
 ): Promise<void> => {
   const key = `otp:${identifier}`;
   await redis.setex(key, OTP_TTL_SECONDS, hashedOtp);
+  logger.info({ identifier }, 'OTP stored in Redis with 5-min TTL');
 };
 
 /**
@@ -66,7 +82,8 @@ export const validateOtp = async (
   const storedHash = await redis.get(key);
 
   if (!storedHash) {
-    return false; // Expired or never sent
+    logger.warn({ identifier }, 'OTP validation failed — expired or not found');
+    return false;
   }
 
   const inputHash = crypto
@@ -75,10 +92,12 @@ export const validateOtp = async (
     .digest('hex');
 
   if (inputHash === storedHash) {
-    await redis.del(key); // One-time use — delete after success
+    await redis.del(key);
+    logger.info({ identifier }, 'OTP validated and deleted successfully');
     return true;
   }
 
+  logger.warn({ identifier }, 'OTP validation failed — hash mismatch');
   return false;
 };
 
@@ -88,5 +107,6 @@ export const validateOtp = async (
 export const otpExists = async (identifier: string): Promise<boolean> => {
   const key = `otp:${identifier}`;
   const exists = await redis.exists(key);
+  logger.debug({ identifier, exists: exists === 1 }, 'OTP existence check');
   return exists === 1;
 };
