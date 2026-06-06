@@ -1,15 +1,20 @@
 /**
  * ============================================================
- * Project:      koshiv - Sovereign Edu Platform (Learning App for Kids)
- * File:         src/config/db.ts
- * Module:       auth_module
- * Version:      1.0.0
- * Author:       Backend Developer (Koushal Jha)
- * Date:         2026-06-06
- * Aim:          PostgreSQL connection pool for auth_module.
- *               Connects to koshiv_kla database via Tailscale.
- * Changelog:
- *   v1.0.0 (2026-06-06): Initial creation.
+ * Developer Name: Koushal Jha
+ * Developer Email: koushaljha.cs@gmail.com
+ * Project Name: koshiv - Learning App for Kids
+ * Role: Backend Developer
+ * Module: auth_module
+ * File: src/config/db.ts
+ * Original File Version: 1.0.0
+ * Complete Version Tracing:
+ * Version 1.0.0 | Commit: d4572d1 | Initial PostgreSQL connection pool — Tailscale IP, koshiv_kla database
+ *
+ * Aim: PostgreSQL Connection Pool for Auth Module
+ * Why: Creates a pg Pool connected to koshiv_kla database at
+ *      100.81.13.80:34551 via Tailscale. All auth data (users,
+ *      profiles, consents, device credentials) lives in this DB.
+ *      Pool max 20, idle timeout 30s, connection timeout 5s.
  * ============================================================
  */
 
