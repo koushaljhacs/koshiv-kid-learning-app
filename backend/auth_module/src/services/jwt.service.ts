@@ -10,12 +10,14 @@
  * Complete Version Tracing:
  * Version 1.0.0 | Initial JWT service — RS256 asymmetric, access token 15min, refresh token 7d
  * Version 1.0.1 | Fix: verifyAccessToken now uses public key exclusively, added Pino logging
+ * Version 1.0.2 | Fix: Removed duplicate 'subject' option from jwt.sign — payload already contains 'sub' field
  *
  * Aim: JWT Token Generation & Verification Service
  * Why: Generates RS256-signed Access Tokens (15 min TTL) and Refresh Tokens
  *      (7 day TTL) using private key. Verification uses public key only.
  *      Zero shared secrets — fully asymmetric. Spring Boot services verify
  *      using the same public key.
+ *      'sub' claim is only in payload, not duplicated in options.
  * ============================================================
  */
 
@@ -65,6 +67,7 @@ export interface TokenPair {
  * Generate Access Token + Refresh Token pair.
  * Access Token: 15 minutes, contains user identity and role.
  * Refresh Token: 7 days, contains only user_id for re-issuance.
+ * 'sub' is in payload — NOT duplicated in options to avoid jwt.sign conflict.
  */
 export const generateTokenPair = (payload: TokenPayload): TokenPair => {
   logger.info({ sub: payload.sub, role: payload.role }, 'Generating token pair');
@@ -73,7 +76,6 @@ export const generateTokenPair = (payload: TokenPayload): TokenPair => {
     algorithm: 'RS256',
     expiresIn: ACCESS_TOKEN_TTL,
     issuer: 'koshiv-auth',
-    subject: payload.sub,
   });
 
   const refreshToken = jwt.sign(
@@ -83,7 +85,6 @@ export const generateTokenPair = (payload: TokenPayload): TokenPair => {
       algorithm: 'RS256',
       expiresIn: REFRESH_TOKEN_TTL,
       issuer: 'koshiv-auth',
-      subject: payload.sub,
     },
   );
 
@@ -101,7 +102,6 @@ export const generateAccessToken = (payload: TokenPayload): string => {
     algorithm: 'RS256',
     expiresIn: ACCESS_TOKEN_TTL,
     issuer: 'koshiv-auth',
-    subject: payload.sub,
   });
 
   logger.debug({ sub: payload.sub }, 'Access token generated successfully');
