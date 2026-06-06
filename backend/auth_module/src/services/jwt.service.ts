@@ -51,7 +51,7 @@ const REFRESH_TOKEN_TTL = '7d';
 
 export interface TokenPayload {
   sub: string;
-  role: 'parent' | 'child';
+  role: 'parent' | 'student';
   email?: string;
   handle?: string;
 }

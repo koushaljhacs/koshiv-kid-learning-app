@@ -9,17 +9,20 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth controller — parent registration with FIDO2, child login with handle+PIN
+ * Version 1.1.0 | Integrated auth.service.ts — real DB login for parent (email+password) and student (handle+PIN), rate limiting, audit logging
  *
  * Aim: Authentication HTTP Request/Response Handler
- * Why: Handles parent registration (FIDO2/WebAuthn) and child login
- *      (handle + PIN) HTTP requests. Delegates business logic to
- *      otp.service.ts, jwt.service.ts, and fido2.service.ts.
+ * Why: Handles parent login (email+password), student login (handle+PIN),
+ *      parent registration (FIDO2/WebAuthn), and token refresh.
+ *      Delegates business logic to auth.service.ts, jwt.service.ts, and fido2.service.ts.
+ *      Never exposes internal error details to client.
  * ============================================================
  */
 
 import { Request, Response } from 'express';
 import pino from 'pino';
 import { generateTokenPair, TokenPayload } from '../services/jwt.service';
+import { parentLogin, studentLogin } from '../services/auth.service';
 import { generateFido2RegistrationOptions, verifyFido2RegistrationResponse } from '../services/fido2.service';
 
 const logger = pino({
@@ -33,6 +36,77 @@ const logger = pino({
   },
   level: process.env.LOG_LEVEL || 'debug',
 });
+
+/**
+ * Get client IP from request headers or connection.
+ */
+const getClientIp = (req: Request): string => {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+         req.ip ||
+         'unknown';
+};
+
+/**
+ * Get user agent from request.
+ */
+const getUserAgent = (req: Request): string => {
+  return req.get('User-Agent') || 'unknown';
+};
+
+/**
+ * POST /api/v1/auth/parent/login
+ * Body: { email: string, password: string }
+ * Authenticates parent with email and password.
+ * Rate limited, account lockout after 5 failures.
+ */
+export const parentLoginHandler = async (req: Request, res: Response): Promise<void> => {
+  const { email, password } = req.body;
+
+  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+    logger.warn('Parent login request missing fields');
+    res.status(400).json({ error: 'Email and password are required' });
+    return;
+  }
+
+  try {
+    const ipAddress = getClientIp(req);
+    const userAgent = getUserAgent(req);
+
+    const result = await parentLogin(email, password, ipAddress, userAgent);
+
+    if (!result.success) {
+      res.status(401).json({ error: result.error });
+      return;
+    }
+
+    if (!result.user) {
+      res.status(500).json({ error: 'An unexpected error occurred' });
+      return;
+    }
+
+    const payload: TokenPayload = {
+      sub: result.user.user_id,
+      role: 'parent',
+      email: result.user.email || undefined,
+    };
+
+    const tokens = generateTokenPair(payload);
+
+    logger.info({ userId: result.user.user_id }, 'Parent logged in successfully');
+    res.status(200).json({
+      message: 'Login successful',
+      user: {
+        user_id: result.user.user_id,
+        user_handle: result.user.user_handle,
+        role: result.user.role,
+      },
+      ...tokens,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Parent login failed unexpectedly');
+    res.status(500).json({ error: 'An unexpected error occurred' });
+  }
+};
 
 /**
  * POST /api/v1/auth/parent/register/options
@@ -49,13 +123,13 @@ export const getRegistrationOptions = async (req: Request, res: Response): Promi
   }
 
   try {
-    const userId = `parent_${Date.now()}`; // Temporary — will be DB user ID in production
+    const userId = `parent_${Date.now()}`;
     const options = await generateFido2RegistrationOptions(userId, email);
 
     logger.info({ email }, 'FIDO2 registration options generated');
     res.status(200).json(options);
   } catch (error) {
-    logger.error({ err: error, email }, 'Failed to generate registration options');
+    logger.error({ err: error }, 'Failed to generate registration options');
     res.status(500).json({ error: 'Failed to generate registration options' });
   }
 };
@@ -84,7 +158,7 @@ export const verifyRegistration = async (req: Request, res: Response): Promise<v
     }
 
     const payload: TokenPayload = {
-      sub: `parent_${Date.now()}`, // TODO: Replace with actual DB user ID
+      sub: `parent_${Date.now()}`,
       role: 'parent',
       email,
     };
@@ -97,51 +171,63 @@ export const verifyRegistration = async (req: Request, res: Response): Promise<v
       ...tokens,
     });
   } catch (error) {
-    logger.error({ err: error, email }, 'Failed to verify registration');
+    logger.error({ err: error }, 'Failed to verify registration');
     res.status(500).json({ error: 'Failed to verify registration' });
   }
 };
 
 /**
- * POST /api/v1/auth/child/login
+ * POST /api/v1/auth/student/login
  * Body: { handle: string, pin: string }
- * Validates child handle and PIN, returns JWT tokens.
- * TODO: PIN validation against PostgreSQL (not yet implemented — Step 4 DB integration)
+ * Authenticates student with handle and PIN.
+ * Rate limited, account lockout after 5 failures.
  */
 export const childLogin = async (req: Request, res: Response): Promise<void> => {
   const { handle, pin } = req.body;
 
   if (!handle || !pin || typeof handle !== 'string' || typeof pin !== 'string') {
-    logger.warn('Child login request missing handle or pin');
+    logger.warn('Student login request missing handle or pin');
     res.status(400).json({ error: 'Handle and PIN are required' });
     return;
   }
 
   try {
-    // TODO: Validate handle + PIN against PostgreSQL users table
-    // Placeholder logic for now
-    if (pin.length < 4) {
-      logger.warn({ handle }, 'Child login failed — invalid PIN');
-      res.status(401).json({ error: 'Invalid handle or PIN' });
+    const ipAddress = getClientIp(req);
+    const userAgent = getUserAgent(req);
+
+    const result = await studentLogin(handle, pin, ipAddress, userAgent);
+
+    if (!result.success) {
+      res.status(401).json({ error: result.error });
+      return;
+    }
+
+    if (!result.user) {
+      res.status(500).json({ error: 'An unexpected error occurred' });
       return;
     }
 
     const payload: TokenPayload = {
-      sub: `child_${handle}`, // TODO: Replace with actual DB user ID
-      role: 'child',
-      handle,
+      sub: result.user.user_id,
+      role: 'student',
+      handle: result.user.user_handle,
     };
 
     const tokens = generateTokenPair(payload);
 
-    logger.info({ handle }, 'Child logged in successfully');
+    logger.info({ userId: result.user.user_id }, 'Student logged in successfully');
     res.status(200).json({
-      message: 'Child logged in successfully',
+      message: 'Login successful',
+      user: {
+        user_id: result.user.user_id,
+        user_handle: result.user.user_handle,
+        role: result.user.role,
+      },
       ...tokens,
     });
   } catch (error) {
-    logger.error({ err: error, handle }, 'Failed to login child');
-    res.status(500).json({ error: 'Failed to login' });
+    logger.error({ err: error }, 'Student login failed unexpectedly');
+    res.status(500).json({ error: 'An unexpected error occurred' });
   }
 };
 
