@@ -1,23 +1,48 @@
+/**
+ * ============================================================
+ * Developer Name: Koushal Jha
+ * Developer Email: koushaljha.cs@gmail.com
+ * Project Name: koshiv - Learning App for Kids
+ * Role: Backend Developer
+ * Module: auth_module
+ * Original File Version: 1.0.0
+ * Complete Version Tracing:
+ * Version 1.0.0 | Commit: d59c643 | Initial tsconfig — strict mode, ES2022 target, noUnused checks
+ *
+ * Aim: TypeScript Compiler Configuration
+ * Why: Enforces strict type-checking (noImplicitAny, strictNullChecks,
+ *      noUnusedLocals, noUnusedParameters), targets ES2022 for Node 20 LTS
+ *      compatibility, outputs compiled JS to dist/ folder with source maps
+ *      for debugging.
+ * ============================================================
+ */
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "lib": ["ES2022"],
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "declaration": true,
-    "sourceMap": true
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "commonjs",
+        "lib": [
+            "ES2022"
+        ],
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "strict": true,
+        "noImplicitAny": true,
+        "strictNullChecks": true,
+        "strictFunctionTypes": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "declaration": true,
+        "sourceMap": true
+    },
+    "include": [
+        "src/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
 }
