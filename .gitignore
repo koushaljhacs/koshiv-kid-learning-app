@@ -4,7 +4,8 @@
 # Role: Docker Engineer
 # Original File Version: 1.0.0.0.0
 # Complete Version Tracing:
-# Version 1.0.0.0.0 | Commit: _________ | Initial .gitignore creation — excluding sensitive .env files, OS artifacts, and IDE configs
+# Version 1.0.0.0.0 | Initial .gitignore creation — excluding sensitive .env files, OS artifacts, and IDE configs
+# Version 1.0.0.0.1 | Added JWT keys exclusion — private.pem and public.pem must never be committed
 #
 # Aim: Git Ignore Rules
 # Why: Prevents accidental exposure of sensitive credentials (.env),
@@ -30,3 +31,6 @@ Desktop.ini
 .idea/
 *.swp
 *.swo
+
+# JWT Keys (CRITICAL - Security)
+keys/*.pem
