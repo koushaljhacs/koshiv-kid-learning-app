@@ -9,12 +9,14 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth controller — parent registration with FIDO2, child login with handle+PIN
- * Version 1.1.0 | Integrated auth.service.ts — real DB login for parent (email+password) and student (handle+PIN), rate limiting, audit logging
+ * Version 1.1.0 | Integrated auth.service.ts — real DB login for parent and student, rate limiting, audit logging
+ * Version 1.2.0 | Added registerParent handler — transactional parent+child registration with handle generation
+ * Version 1.2.1 | Fix: Updated FIDO2 import to verifyAndStoreCredential, removed deprecated verifyFido2RegistrationResponse
  *
  * Aim: Authentication HTTP Request/Response Handler
- * Why: Handles parent login (email+password), student login (handle+PIN),
- *      parent registration (FIDO2/WebAuthn), and token refresh.
- *      Delegates business logic to auth.service.ts, jwt.service.ts, and fido2.service.ts.
+ * Why: Handles parent login, student login, parent+child registration,
+ *      FIDO2/WebAuthn, and token refresh. Delegates business logic to
+ *      auth.service.ts, registration.service.ts, jwt.service.ts, and fido2.service.ts.
  *      Never exposes internal error details to client.
  * ============================================================
  */
@@ -23,7 +25,8 @@ import { Request, Response } from 'express';
 import pino from 'pino';
 import { generateTokenPair, TokenPayload } from '../services/jwt.service';
 import { parentLogin, studentLogin } from '../services/auth.service';
-import { generateFido2RegistrationOptions, verifyFido2RegistrationResponse } from '../services/fido2.service';
+import { registerParentWithChild } from '../services/registration.service';
+import { generateFido2RegistrationOptions, verifyAndStoreCredential } from '../services/fido2.service';
 
 const logger = pino({
   transport: {
@@ -51,6 +54,54 @@ const getClientIp = (req: Request): string => {
  */
 const getUserAgent = (req: Request): string => {
   return req.get('User-Agent') || 'unknown';
+};
+
+/**
+ * POST /api/v1/auth/register
+ * Body: { parent_name, email, password, phone_number?, child_name, child_dob?, child_grade? }
+ * Creates parent + child in single transaction. Returns handles and child PIN.
+ */
+export const registerParent = async (req: Request, res: Response): Promise<void> => {
+  const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
+
+  if (!parent_name || !email || !password || !child_name) {
+    logger.warn('Registration request missing required fields');
+    res.status(400).json({
+      error: 'parent_name, email, password, and child_name are required',
+    });
+    return;
+  }
+
+  try {
+    const result = await registerParentWithChild({
+      parent_name,
+      email,
+      password,
+      phone_number,
+      child_name,
+      child_dob,
+      child_grade,
+    });
+
+    if (!result.success) {
+      res.status(500).json({ error: result.error });
+      return;
+    }
+
+    logger.info({ email }, 'Parent+child registered successfully');
+
+    res.status(201).json({
+      message: 'Registration successful',
+      parent_handle: result.parent_handle,
+      child_handle: result.child_handle,
+      child_pin: result.child_pin,
+      parent_user_id: result.parent_user_id,
+      child_user_id: result.child_user_id,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Registration failed');
+    res.status(500).json({ error: 'Registration failed. Please try again.' });
+  }
 };
 
 /**
@@ -136,38 +187,38 @@ export const getRegistrationOptions = async (req: Request, res: Response): Promi
 
 /**
  * POST /api/v1/auth/parent/register/verify
- * Body: { email: string, response: RegistrationResponseJSON, challenge: string }
- * Verifies WebAuthn registration response and returns JWT tokens.
+ * Body: { userId: string, response: RegistrationResponseJSON, challenge: string, device_label?: string }
+ * Verifies WebAuthn registration response, stores credential, returns JWT tokens.
  */
 export const verifyRegistration = async (req: Request, res: Response): Promise<void> => {
-  const { email, response, challenge } = req.body;
+  const { userId, response, challenge, device_label } = req.body;
 
-  if (!email || !response || !challenge) {
+  if (!userId || !response || !challenge) {
     logger.warn('Registration verify request missing fields');
-    res.status(400).json({ error: 'Email, response, and challenge are required' });
+    res.status(400).json({ error: 'userId, response, and challenge are required' });
     return;
   }
 
   try {
-    const verification = await verifyFido2RegistrationResponse(response, challenge);
+    const verification = await verifyAndStoreCredential(userId, response, challenge, device_label);
 
     if (!verification.verified) {
-      logger.warn({ email }, 'FIDO2 registration verification failed');
+      logger.warn({ userId }, 'FIDO2 registration verification failed');
       res.status(401).json({ error: 'Registration verification failed' });
       return;
     }
 
     const payload: TokenPayload = {
-      sub: `parent_${Date.now()}`,
+      sub: userId,
       role: 'parent',
-      email,
     };
 
     const tokens = generateTokenPair(payload);
 
-    logger.info({ email }, 'Parent registered successfully');
+    logger.info({ userId }, 'FIDO2 credential verified and stored');
     res.status(201).json({
-      message: 'Parent registered successfully',
+      message: 'Biometric registration successful',
+      credential_id: verification.credential_id,
       ...tokens,
     });
   } catch (error) {
