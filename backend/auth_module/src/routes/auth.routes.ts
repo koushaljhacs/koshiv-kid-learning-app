@@ -10,6 +10,7 @@
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth routes — OTP, parent registration, child login, token refresh endpoints
  * Version 1.1.0 | Added parent login route (email+password) integrated with auth.service.ts
+ * Version 1.2.0 | Added registration route — transactional parent+child creation
  *
  * Aim: Auth Module API Route Definitions
  * Why: Maps HTTP endpoints to controller functions.
@@ -26,9 +27,13 @@ import {
   childLogin,
   refreshToken,
   parentLoginHandler,
+  registerParent,
 } from '../controllers/auth.controller';
 
 const router = Router();
+
+// Parent + Child Registration (Transactional)
+router.post('/register', registerParent);
 
 // Parent Login (Email + Password)
 router.post('/parent/login', parentLoginHandler);
@@ -37,7 +42,7 @@ router.post('/parent/login', parentLoginHandler);
 router.post('/otp/send', sendOtp);
 router.post('/otp/verify', verifyOtp);
 
-// Parent Registration (FIDO2/WebAuthn)
+// Parent FIDO2/WebAuthn Registration
 router.post('/parent/register/options', getRegistrationOptions);
 router.post('/parent/register/verify', verifyRegistration);
 
