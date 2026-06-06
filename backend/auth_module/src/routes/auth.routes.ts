@@ -9,6 +9,7 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth routes — OTP, parent registration, child login, token refresh endpoints
+ * Version 1.1.0 | Added parent login route (email+password) integrated with auth.service.ts
  *
  * Aim: Auth Module API Route Definitions
  * Why: Maps HTTP endpoints to controller functions.
@@ -24,9 +25,13 @@ import {
   verifyRegistration,
   childLogin,
   refreshToken,
+  parentLoginHandler,
 } from '../controllers/auth.controller';
 
 const router = Router();
+
+// Parent Login (Email + Password)
+router.post('/parent/login', parentLoginHandler);
 
 // OTP Routes
 router.post('/otp/send', sendOtp);
@@ -36,8 +41,8 @@ router.post('/otp/verify', verifyOtp);
 router.post('/parent/register/options', getRegistrationOptions);
 router.post('/parent/register/verify', verifyRegistration);
 
-// Child Login
-router.post('/child/login', childLogin);
+// Student Login (Handle + PIN)
+router.post('/student/login', childLogin);
 
 // Token Management
 router.post('/token/refresh', refreshToken);
