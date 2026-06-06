@@ -10,12 +10,13 @@
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Express server — port 34554, DB + Redis health check, Pino logger
  * Version 1.1.0 | Integrated auth routes, added middleware debugging, startup logging, request logging
+ * Version 1.2.0 | Bound server to 0.0.0.0 for Tailscale network access, added SMTP env vars debug logging
  *
  * Aim: Auth Module Express Server Entry Point
- * Why: Initializes Express app on port 34554 with full debugging.
- *      Verifies PostgreSQL and Redis connectivity on startup.
+ * Why: Initializes Express app on port 34554 bound to all interfaces (0.0.0.0)
+ *      for Tailscale network access. Verifies PostgreSQL and Redis connectivity.
  *      Integrates auth routes at /api/v1/auth/.
- *      Logs every incoming request with method, URL, IP, and response time.
+ *      Logs every incoming request with method, URL, IP.
  *      Handles 404 routes and global errors with Pino structured logging.
  *      Fails fast (process.exit(1)) if any infrastructure connection fails.
  * ============================================================
@@ -147,9 +148,9 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // STARTUP
 // ============================================================
 
-app.listen(PORT, async (): Promise<void> => {
+app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
   logger.info('============================================================');
-  logger.info({ port: PORT }, 'Auth Module server starting');
+  logger.info({ port: PORT, bind: '0.0.0.0' }, 'Auth Module server starting');
   logger.info('============================================================');
 
   logger.debug('Step 1/4: Loading environment variables...');
@@ -163,6 +164,10 @@ app.listen(PORT, async (): Promise<void> => {
       REDIS_HOST: process.env.REDIS_HOST || 'NOT SET',
       REDIS_PORT: process.env.REDIS_PORT || 'NOT SET',
       REDIS_PASSWORD: process.env.REDIS_PASSWORD ? '***HIDDEN***' : 'NOT SET',
+      SMTP_HOST: process.env.SMTP_HOST || 'NOT SET',
+      SMTP_PORT: process.env.SMTP_PORT || 'NOT SET',
+      SMTP_USER: process.env.SMTP_USER || 'NOT SET',
+      SMTP_PASS: process.env.SMTP_PASS ? '***HIDDEN***' : 'NOT SET',
       APP_PORT: process.env.APP_PORT || 'NOT SET',
       RP_ID: process.env.RP_ID || 'NOT SET',
     },
@@ -214,7 +219,7 @@ app.listen(PORT, async (): Promise<void> => {
   if (dbOk && redisOk) {
     logger.info('============================================================');
     logger.info('Auth Service Database and Cache connected successfully');
-    logger.info({ port: PORT }, 'Auth Module is ready to accept requests');
+    logger.info({ port: PORT, bind: '0.0.0.0' }, 'Auth Module is ready to accept requests');
     logger.info('============================================================');
   } else {
     logger.fatal('============================================================');

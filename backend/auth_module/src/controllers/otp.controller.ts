@@ -9,10 +9,11 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial OTP controller — handles send OTP and verify OTP HTTP requests
+ * Version 1.1.0 | Integrated Nodemailer — sends real OTP email, removed raw OTP from response
  *
  * Aim: OTP HTTP Request/Response Handler
  * Why: Receives HTTP requests from routes, validates input, calls OTP
- *      service functions, and returns structured JSON responses.
+ *      service functions, sends OTP via email using Nodemailer.
  *      No business logic — delegates entirely to otp.service.ts.
  * ============================================================
  */
@@ -20,6 +21,7 @@
 import { Request, Response } from 'express';
 import pino from 'pino';
 import { generateOtp, storeOtp, validateOtp, otpExists } from '../services/otp.service';
+import { sendOtpEmail } from '../config/mailer';
 
 const logger = pino({
   transport: {
@@ -36,7 +38,7 @@ const logger = pino({
 /**
  * POST /api/v1/auth/otp/send
  * Body: { email: string }
- * Generates OTP, stores in Redis, returns success.
+ * Generates OTP, stores in Redis, sends via email, returns success.
  */
 export const sendOtp = async (req: Request, res: Response): Promise<void> => {
   const { email } = req.body;
@@ -58,13 +60,19 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     const { rawOtp, hashedOtp } = generateOtp();
     await storeOtp(email, hashedOtp);
 
-    logger.info({ email }, 'OTP sent successfully');
+    logger.info({ email }, 'OTP generated and stored — sending email');
 
-    // In production: send rawOtp via email service here
-    // For dev: return rawOtp in response (REMOVE IN PRODUCTION)
+    const emailSent = await sendOtpEmail(email, rawOtp);
+
+    if (!emailSent) {
+      logger.error({ email }, 'OTP email failed to send');
+      res.status(500).json({ error: 'Failed to send OTP email. Please try again.' });
+      return;
+    }
+
+    logger.info({ email }, 'OTP sent successfully via email');
     res.status(200).json({
-      message: 'OTP sent successfully',
-      otp: rawOtp, // TODO: Remove in production, send via email
+      message: 'OTP sent successfully to your email',
     });
   } catch (error) {
     logger.error({ err: error, email }, 'Failed to send OTP');
@@ -95,7 +103,6 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // TODO: Generate JWT tokens in Step 3 integration
     logger.info({ email }, 'OTP verified successfully');
     res.status(200).json({
       message: 'OTP verified successfully',
