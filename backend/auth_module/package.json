@@ -1,0 +1,35 @@
+{
+  "name": "koshiv-auth-module",
+  "version": "1.0.0",
+  "description": "Authentication Module for koshiv - Sovereign Edu Platform",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "ioredis": "^5.4.1",
+    "pg": "^8.13.0",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/ioredis": "^5.0.0",
+    "@types/node": "^22.5.0",
+    "@types/pg": "^8.11.10",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.3",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.2.0"
+  }
+}
