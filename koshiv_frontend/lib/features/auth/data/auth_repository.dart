@@ -10,10 +10,11 @@
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth Repository — registerInit and registerComplete API calls
  * Version 1.0.1 | Added detailed error logging for DioException to aid debugging
+ * Version 1.0.2 | Fixed endpoint paths — Added /auth prefix per backend routing
  * 
  * Aim: Auth API Data Layer
  * Why: Abstracts HTTP communication for auth endpoints.
- *      Handles POST /register/init and POST /register/complete
+ *      Handles POST /auth/register/init and POST /auth/register/complete
  *      with proper error extraction from DioException responses.
  * ============================================================
  */
@@ -27,7 +28,7 @@ class AuthRepository {
   Future<void> registerInit(Map<String, dynamic> payload) async {
     try {
       print('Register Init Request: $payload');
-      final response = await _dio.post('/register/init', data: payload);
+      final response = await _dio.post('/auth/register/init', data: payload);
       print('Register Init Success: ${response.statusCode}');
       print('Register Init Response: ${response.data}');
     } on DioException catch (e) {
@@ -46,7 +47,7 @@ class AuthRepository {
   Future<Map<String, dynamic>> registerComplete(String email, String otp) async {
     try {
       print('Register Complete Request: email=$email, otp=$otp');
-      final response = await _dio.post('/register/complete', data: {
+      final response = await _dio.post('/auth/register/complete', data: {
         'email': email,
         'otp': otp,
       });
