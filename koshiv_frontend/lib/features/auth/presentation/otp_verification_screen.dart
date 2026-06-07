@@ -9,16 +9,19 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial OTP Verification Screen — 6-digit box UI with resend timer
+ * Version 1.1.0 | Integrated AuthRepository.registerComplete API call with loading state and error handling
  * 
  * Aim: OTP Verification UI (Step 2 of Parent Registration)
  * Why: To verify parent email via 6-digit OTP before completing registration.
- *      Aligned with POST /api/v1/auth/register/complete endpoint.
- *      Displays child PIN on success for parent to save.
+ *      Calls POST /api/v1/auth/register/complete and navigates to success screen
+ *      with child handle and PIN on success.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
 import 'dart:async';
+import '../data/auth_repository.dart';
+import 'registration_success_screen.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
   final String email;
@@ -33,9 +36,12 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   final List<TextEditingController> _otpControllers = List.generate(6, (_) => TextEditingController());
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
+  final AuthRepository _authRepository = AuthRepository();
+
   int _resendTimer = 45;
   Timer? _timer;
   bool _canResend = false;
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -86,7 +92,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     return _otpControllers.map((c) => c.text).join();
   }
 
-  void _handleVerify() {
+  Future<void> _handleVerify() async {
     final otp = _getOtp();
     if (otp.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -95,8 +101,39 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       return;
     }
 
-    // Placeholder for actual API integration (POST /api/v1/auth/register/complete)
-    debugPrint('Verifying OTP: $otp for email: ${widget.email}');
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await _authRepository.registerComplete(widget.email, otp);
+
+      if (!mounted) return;
+
+      final childHandle = response['child_handle'] as String;
+      final childPin = response['child_pin'] as String;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => RegistrationSuccessScreen(
+            childHandle: childHandle,
+            childPin: childPin,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   void _handleResend() {
@@ -216,8 +253,17 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _handleVerify,
-                  child: const Text('Verify', style: TextStyle(fontSize: 16)),
+                  onPressed: _isLoading ? null : _handleVerify,
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Verify', style: TextStyle(fontSize: 16)),
                 ),
               ),
             ],

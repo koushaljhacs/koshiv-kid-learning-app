@@ -11,15 +11,17 @@
  * Version 1.0.0 | Initial Parent Registration UI — Form fields for user data collection
  * Version 1.1.0 | Updated form fields per backend API spec — Added child_name (required), child_dob, child_grade (optional), restructured layout into Parent Details and Child Details sections
  * Version 1.1.1 | Added navigation to OtpVerificationScreen on successful validation
+ * Version 1.2.0 | Integrated AuthRepository.registerInit API call with loading state and error handling
  * 
  * Aim: Secure Parent Registration UI (Step 1) — Aligned with POST /api/v1/auth/register/init
  * Why: Collects parent_name, email, password (required), phone_number (optional)
  *      plus child_name (required), child_dob, child_grade (optional).
- *      On valid submission, navigates to OTP verification screen.
+ *      On valid submission, calls registerInit API and navigates to OTP screen.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
+import '../data/auth_repository.dart';
 import 'otp_verification_screen.dart';
 
 class ParentRegistrationScreen extends StatefulWidget {
@@ -38,7 +40,10 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
   final TextEditingController _childDobController = TextEditingController();
   final TextEditingController _childGradeController = TextEditingController();
 
+  final AuthRepository _authRepository = AuthRepository();
+
   bool _obscurePassword = true;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -52,11 +57,14 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     super.dispose();
   }
 
-  void _handleSendOtp() {
+  Future<void> _handleSendOtp() async {
     final parentName = _parentNameController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
+    final phone = _phoneController.text.trim();
     final childName = _childNameController.text.trim();
+    final childDob = _childDobController.text.trim();
+    final childGrade = _childGradeController.text.trim();
 
     if (parentName.isEmpty || email.isEmpty || password.isEmpty || childName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -65,15 +73,44 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       return;
     }
 
-    // Placeholder for actual API integration (POST /api/v1/auth/register/init)
-    debugPrint('Initiating OTP Dispatch for: $email');
+    setState(() {
+      _isLoading = true;
+    });
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => OtpVerificationScreen(email: email),
-      ),
-    );
+    try {
+      final payload = <String, dynamic>{
+        'parent_name': parentName,
+        'email': email,
+        'password': password,
+        'child_name': childName,
+      };
+
+      if (phone.isNotEmpty) payload['phone_number'] = phone;
+      if (childDob.isNotEmpty) payload['child_dob'] = childDob;
+      if (childGrade.isNotEmpty) payload['child_grade'] = childGrade;
+
+      await _authRepository.registerInit(payload);
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => OtpVerificationScreen(email: email),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -200,8 +237,17 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _handleSendOtp,
-                  child: const Text('Send OTP', style: TextStyle(fontSize: 16)),
+                  onPressed: _isLoading ? null : _handleSendOtp,
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Send OTP', style: TextStyle(fontSize: 16)),
                 ),
               ),
               const SizedBox(height: 16),
