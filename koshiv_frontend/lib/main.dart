@@ -10,6 +10,7 @@
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Main Entry Point — Environment initialization before runApp, placeholder home screen
  * Version 1.1.0 | Updated home to RoleSelectionScreen — App now boots directly into role selection flow
+ * Version 1.1.1 | Updated import path — Changed from api.config.dart to api_config.dart per snake_case convention
  * 
  * Aim: Application Entry Point with Secure Boot and Role-Based Routing
  * Why: To ensure ApiConfig loads environment variables before any widget renders,
@@ -19,8 +20,8 @@
  */
 
 import 'package:flutter/material.dart';
-import 'core/config/api.config.dart';
-import 'features/auth/presentation/role.selection.screen.dart';
+import 'core/config/api_config.dart';
+import 'features/auth/presentation/role_selection_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
