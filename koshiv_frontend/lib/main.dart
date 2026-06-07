@@ -11,17 +11,20 @@
  * Version 1.0.0 | Initial Main Entry Point — Environment initialization before runApp, placeholder home screen
  * Version 1.1.0 | Updated home to RoleSelectionScreen — App now boots directly into role selection flow
  * Version 1.1.1 | Updated import path — Changed from api.config.dart to api_config.dart per snake_case convention
+ * Version 1.2.0 | Added named routing — Replaced home with initialRoute and routes map using AppRoutes constants
  * 
- * Aim: Application Entry Point with Secure Boot and Role-Based Routing
+ * Aim: Application Entry Point with Secure Boot and Named Routing
  * Why: To ensure ApiConfig loads environment variables before any widget renders,
- *      and to direct users to role selection as the first interaction point
- *      for RBAC and COPPA compliance.
+ *      and to provide centralized named routing for type-safe navigation
+ *      across the authentication flow.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
 import 'core/config/api_config.dart';
+import 'core/routes/app_routes.dart';
 import 'features/auth/presentation/role_selection_screen.dart';
+import 'features/auth/presentation/parent_login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,7 +39,11 @@ class KoshivApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Koshiv Edu',
-      home: const RoleSelectionScreen(),
+      initialRoute: AppRoutes.roleSelection,
+      routes: {
+        AppRoutes.roleSelection: (context) => const RoleSelectionScreen(),
+        AppRoutes.parentLogin: (context) => const ParentLoginScreen(),
+      },
     );
   }
 }

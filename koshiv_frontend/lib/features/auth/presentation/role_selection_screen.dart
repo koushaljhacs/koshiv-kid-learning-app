@@ -9,6 +9,7 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Role Selection Screen — Parent/Student login and registration entry points
+ * Version 1.1.0 | Wired Login as Parent button to navigate to ParentLoginScreen via AppRoutes
  * 
  * Aim: Role Selection UI for Authentication Flow
  * Why: To enforce RBAC and COPPA data isolation from the first user interaction.
@@ -17,6 +18,7 @@
  */
 
 import 'package:flutter/material.dart';
+import '../../../core/routes/app_routes.dart';
 
 class RoleSelectionScreen extends StatelessWidget {
   const RoleSelectionScreen({super.key});
@@ -54,7 +56,7 @@ class RoleSelectionScreen extends StatelessWidget {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
-                      debugPrint('Navigating to Parent Login...');
+                      Navigator.pushNamed(context, AppRoutes.parentLogin);
                     },
                     child: const Text('Login as Parent'),
                   ),
