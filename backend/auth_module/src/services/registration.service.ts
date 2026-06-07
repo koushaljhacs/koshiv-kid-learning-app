@@ -9,10 +9,13 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Registration service — transactional parent+child creation, handle generation, FIDO2 persistence
+ * Version 1.1.0 | ARCH-01 Fix: Split into Redis-Hold pattern. DB transaction now only executes AFTER OTP verification.
+ *                 Removed direct DB call. registerParentWithChild now called from register/complete endpoint only.
  *
  * Aim: Parent Registration Orchestration with Transaction Safety
  * Why: Creates parent user, child user, both profiles, relationship,
- *      consent, and device credential in a SINGLE PostgreSQL transaction.
+ *      consent in a SINGLE PostgreSQL transaction. Only called AFTER
+ *      email ownership verified via OTP (Redis-Hold pattern).
  *      If any step fails, entire block ROLLBACK — zero orphaned records.
  *      Generates cryptographically secure user_handle for both parent and child.
  *      Auto-generates 6-digit PIN for child login.
@@ -61,8 +64,9 @@ export interface RegistrationResult {
  * Format: prefix + 8 random lowercase alphanumeric characters.
  * Collision check: retries up to 5 times if handle exists.
  */
-const generateHandle = async (prefix: string): Promise<string> => {
+const generateHandle = async (prefix: string, client?: any): Promise<string> => {
   const maxRetries = 5;
+  const dbClient = client || pool;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const randomPart = crypto
@@ -73,8 +77,7 @@ const generateHandle = async (prefix: string): Promise<string> => {
 
     const handle = `${prefix}${randomPart}`;
 
-    // Check if handle exists
-    const result = await pool.query(
+    const result = await dbClient.query(
       'SELECT 1 FROM auth_schema.users WHERE user_handle = $1',
       [handle],
     );
@@ -98,6 +101,7 @@ const generateChildPin = (): string => {
 
 /**
  * Complete parent + child registration in a single transaction.
+ * CALLED ONLY AFTER OTP VERIFICATION via Redis-Hold pattern.
  *
  * Steps:
  *   1. Hash password, generate handles and PIN
@@ -116,23 +120,23 @@ const generateChildPin = (): string => {
 export const registerParentWithChild = async (
   input: ParentRegistrationInput,
 ): Promise<RegistrationResult> => {
-  logger.info({ email: input.email }, 'Starting parent+child registration');
-
-  // Generate values
-  const passwordHash = await hashPassword(input.password);
-  const childPin = generateChildPin();
-  const childPinHash = hashPin(childPin);
-  const parentHandle = await generateHandle('parent_');
-  const childHandle = await generateHandle('student_');
+  logger.info({ email: input.email }, 'Starting parent+child registration transaction');
 
   const client = await pool.connect();
 
   try {
+    // Generate values inside transaction context
+    const passwordHash = await hashPassword(input.password);
+    const childPin = generateChildPin();
+    const childPinHash = hashPin(childPin);
+    const parentHandle = await generateHandle('parent_', client);
+    const childHandle = await generateHandle('student_', client);
+
     await client.query('BEGIN');
 
     logger.debug('Transaction BEGIN — inserting parent user');
 
-    // Step 3: Insert parent user
+    // Insert parent user
     const parentResult = await client.query(
       `INSERT INTO auth_schema.users (user_handle, role, email, password_hash, phone_number)
        VALUES ($1, 'parent', $2, $3, $4)
@@ -142,7 +146,7 @@ export const registerParentWithChild = async (
     const parentUserId: string = parentResult.rows[0].user_id;
     logger.debug({ parentUserId }, 'Parent user inserted');
 
-    // Step 4: Insert parent profile
+    // Insert parent profile
     await client.query(
       `INSERT INTO auth_schema.user_profiles (user_id, full_name)
        VALUES ($1, $2)`,
@@ -150,7 +154,7 @@ export const registerParentWithChild = async (
     );
     logger.debug({ parentUserId }, 'Parent profile inserted');
 
-    // Step 5: Insert child user
+    // Insert child user
     const childResult = await client.query(
       `INSERT INTO auth_schema.users (user_handle, role, pin_hash)
        VALUES ($1, 'student', $2)
@@ -160,7 +164,7 @@ export const registerParentWithChild = async (
     const childUserId: string = childResult.rows[0].user_id;
     logger.debug({ childUserId }, 'Child user inserted');
 
-    // Step 6: Insert child profile
+    // Insert child profile
     await client.query(
       `INSERT INTO auth_schema.user_profiles (user_id, full_name, date_of_birth, grade_class)
        VALUES ($1, $2, $3, $4)`,
@@ -173,7 +177,7 @@ export const registerParentWithChild = async (
     );
     logger.debug({ childUserId }, 'Child profile inserted');
 
-    // Step 7: Insert relationship (parent is guardian of child)
+    // Insert relationship (parent is guardian of child)
     await client.query(
       `INSERT INTO auth_schema.user_relationships (student_id, guardian_id, relationship_type, is_primary)
        VALUES ($1, $2, 'custodian', TRUE)`,
@@ -181,7 +185,7 @@ export const registerParentWithChild = async (
     );
     logger.debug('Relationship inserted');
 
-    // Step 8: Insert consent for parent
+    // Insert consent for parent
     await client.query(
       `INSERT INTO auth_schema.user_consents (user_id, terms_accepted, privacy_accepted)
        VALUES ($1, TRUE, TRUE)`,

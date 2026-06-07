@@ -11,6 +11,7 @@
  * Version 1.0.0 | Initial Auth routes — OTP, parent registration, child login, token refresh endpoints
  * Version 1.1.0 | Added parent login route (email+password) integrated with auth.service.ts
  * Version 1.2.0 | Added registration route — transactional parent+child creation
+ * Version 1.3.0 | ARCH-01 Fix: Replaced single /register with 2-step /register/init and /register/complete (Redis-Hold pattern)
  *
  * Aim: Auth Module API Route Definitions
  * Why: Maps HTTP endpoints to controller functions.
@@ -27,13 +28,15 @@ import {
   childLogin,
   refreshToken,
   parentLoginHandler,
-  registerParent,
+  registerInit,
+  registerComplete,
 } from '../controllers/auth.controller';
 
 const router = Router();
 
-// Parent + Child Registration (Transactional)
-router.post('/register', registerParent);
+// Parent + Child Registration — 2-Step Redis-Hold Pattern
+router.post('/register/init', registerInit);
+router.post('/register/complete', registerComplete);
 
 // Parent Login (Email + Password)
 router.post('/parent/login', parentLoginHandler);

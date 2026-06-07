@@ -12,11 +12,13 @@
  * Version 1.1.0 | Integrated auth.service.ts — real DB login for parent and student, rate limiting, audit logging
  * Version 1.2.0 | Added registerParent handler — transactional parent+child registration with handle generation
  * Version 1.2.1 | Fix: Updated FIDO2 import to verifyAndStoreCredential, removed deprecated verifyFido2RegistrationResponse
+ * Version 1.3.0 | ARCH-01 Fix: Split registration into registerInit (Redis-Hold + OTP email) and registerComplete (OTP verify + DB transaction)
  *
  * Aim: Authentication HTTP Request/Response Handler
- * Why: Handles parent login, student login, parent+child registration,
- *      FIDO2/WebAuthn, and token refresh. Delegates business logic to
- *      auth.service.ts, registration.service.ts, jwt.service.ts, and fido2.service.ts.
+ * Why: Handles parent login, student login, 2-step parent+child registration
+ *      (Redis-Hold pattern), FIDO2/WebAuthn, and token refresh.
+ *      Delegates business logic to auth.service.ts, registration.service.ts,
+ *      redis-hold.service.ts, jwt.service.ts, and fido2.service.ts.
  *      Never exposes internal error details to client.
  * ============================================================
  */
@@ -26,6 +28,8 @@ import pino from 'pino';
 import { generateTokenPair, TokenPayload } from '../services/jwt.service';
 import { parentLogin, studentLogin } from '../services/auth.service';
 import { registerParentWithChild } from '../services/registration.service';
+import { initiateRegistration, completeRegistration } from '../services/redis-hold.service';
+import { sendOtpEmail } from '../config/mailer';
 import { generateFido2RegistrationOptions, verifyAndStoreCredential } from '../services/fido2.service';
 
 const logger = pino({
@@ -57,15 +61,19 @@ const getUserAgent = (req: Request): string => {
 };
 
 /**
- * POST /api/v1/auth/register
+ * POST /api/v1/auth/register/init
  * Body: { parent_name, email, password, phone_number?, child_name, child_dob?, child_grade? }
- * Creates parent + child in single transaction. Returns handles and child PIN.
+ *
+ * Step 1 of 2: Redis-Hold Pattern.
+ * Validates payload → generates OTP → stores payload+hashedOTP in Redis (5-min TTL) →
+ * sends OTP via email. ZERO PostgreSQL interaction.
+ * Returns success message, no sensitive data.
  */
-export const registerParent = async (req: Request, res: Response): Promise<void> => {
+export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
 
   if (!parent_name || !email || !password || !child_name) {
-    logger.warn('Registration request missing required fields');
+    logger.warn('Registration init request missing required fields');
     res.status(400).json({
       error: 'parent_name, email, password, and child_name are required',
     });
@@ -73,7 +81,7 @@ export const registerParent = async (req: Request, res: Response): Promise<void>
   }
 
   try {
-    const result = await registerParentWithChild({
+    const result = await initiateRegistration({
       parent_name,
       email,
       password,
@@ -83,12 +91,67 @@ export const registerParent = async (req: Request, res: Response): Promise<void>
       child_grade,
     });
 
+    if ('error' in result) {
+      res.status(409).json({ error: result.error });
+      return;
+    }
+
+    // Send OTP via email
+    const emailSent = await sendOtpEmail(email, result.rawOtp);
+
+    if (!emailSent) {
+      logger.error({ email }, 'Failed to send registration OTP email');
+      res.status(500).json({ error: 'Failed to send OTP email. Please try again.' });
+      return;
+    }
+
+    logger.info({ email }, 'Registration initiated — OTP sent via email');
+    res.status(200).json({
+      message: 'OTP sent to your email. Please verify to complete registration.',
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Registration init failed');
+    res.status(500).json({ error: 'Registration failed. Please try again.' });
+  }
+};
+
+/**
+ * POST /api/v1/auth/register/complete
+ * Body: { email: string, otp: string }
+ *
+ * Step 2 of 2: Redis-Hold Pattern.
+ * Validates OTP against Redis → retrieves stored payload →
+ * executes BEGIN...COMMIT transaction in PostgreSQL →
+ * deletes Redis key → returns handles + child PIN.
+ */
+export const registerComplete = async (req: Request, res: Response): Promise<void> => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp || typeof email !== 'string' || typeof otp !== 'string') {
+    logger.warn('Registration complete request missing fields');
+    res.status(400).json({ error: 'Email and OTP are required' });
+    return;
+  }
+
+  try {
+    // Validate OTP and get stored payload
+    const payload = await completeRegistration(email, otp);
+
+    if (!payload) {
+      logger.warn({ email }, 'OTP validation failed or registration expired');
+      res.status(401).json({ error: 'Invalid or expired OTP. Please start registration again.' });
+      return;
+    }
+
+    // Execute DB transaction
+    const result = await registerParentWithChild(payload);
+
     if (!result.success) {
       res.status(500).json({ error: result.error });
       return;
     }
 
-    logger.info({ email }, 'Parent+child registered successfully');
+    logger.info({ email }, 'Registration completed successfully');
 
     res.status(201).json({
       message: 'Registration successful',
@@ -99,7 +162,7 @@ export const registerParent = async (req: Request, res: Response): Promise<void>
       child_user_id: result.child_user_id,
     });
   } catch (error) {
-    logger.error({ err: error }, 'Registration failed');
+    logger.error({ err: error }, 'Registration complete failed');
     res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 };
