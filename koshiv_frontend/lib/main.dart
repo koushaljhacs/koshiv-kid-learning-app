@@ -20,7 +20,7 @@
 
 import 'package:flutter/material.dart';
 import 'core/config/api.config.dart';
-import 'features/auth/presentation/role_selection_screen.dart';
+import 'features/auth/presentation/role.selection.screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
