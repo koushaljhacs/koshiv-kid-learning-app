@@ -8,16 +8,19 @@
  * File: lib/main.dart
  * Original File Version: 1.0.0
  * Complete Version Tracing:
- * Version 1.0.0 | Initial Main Entry Point — Environment initialization before runApp
+ * Version 1.0.0 | Initial Main Entry Point — Environment initialization before runApp, placeholder home screen
+ * Version 1.1.0 | Updated home to RoleSelectionScreen — App now boots directly into role selection flow
  * 
- * Aim: Application Entry Point with Secure Boot
- * Why: To ensure ApiConfig loads environment variables before any widget renders.
- *      Guarantees zero hardcoded configuration at app startup.
+ * Aim: Application Entry Point with Secure Boot and Role-Based Routing
+ * Why: To ensure ApiConfig loads environment variables before any widget renders,
+ *      and to direct users to role selection as the first interaction point
+ *      for RBAC and COPPA compliance.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
 import 'core/config/api.config.dart';
+import 'features/auth/presentation/role_selection_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,11 +35,7 @@ class KoshivApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Koshiv Edu',
-      home: Scaffold(
-        body: Center(
-          child: Text('Environment Initialized. Base URL Loaded.'),
-        ),
-      ),
+      home: const RoleSelectionScreen(),
     );
   }
 }
