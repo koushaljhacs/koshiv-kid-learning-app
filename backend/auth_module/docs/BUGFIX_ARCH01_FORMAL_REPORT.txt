@@ -1,0 +1,207 @@
+======================================================================
+BUG FIX REPORT — ARCH-01 & SUBSEQUENT FIXES
+======================================================================
+Project:      koshiv - Sovereign Edu Platform (Learning App for Kids)
+Module:       auth_module (Authentication Microservice)
+Bug IDs:      ARCH-01 (Critical), BUG-02 (Email Existence Check)
+Developer:    Koushal Jha
+Email:        koushaljha.cs@gmail.com
+Date:         2026-06-07
+Submitted To: Lead Architect / Technical Director
+Via:          Mediator Sir
+======================================================================
+
+IMPORTANT NOTES FOR LEAD ARCHITECT:
+----------------------------------------------------------------------
+1. All bug fix files have been handed over to Mediator Sir.
+   If you need to review any specific file, please request it
+   directly from the Mediator. Do NOT message the developer.
+
+2. If any further issue or bug is found, THEN message the developer
+   via Mediator Sir for resolution.
+
+
+======================================================================
+BUG ARCH-01: Registration Flow Flaw (Critical)
+======================================================================
+
+SEVERITY: Critical
+STATUS:   RESOLVED
+
+DESCRIPTION:
+The original POST /api/v1/auth/register endpoint inserted user data
+directly into PostgreSQL BEFORE verifying email ownership via OTP.
+This violated the Zero-Trust architecture and could lead to:
+  - Spam accounts (bots registering fake emails)
+  - Orphan accounts (unverified emails consuming DB space)
+  - Database pollution (invalid data in 4 tables simultaneously)
+
+ROOT CAUSE:
+Single endpoint handled both OTP generation AND DB insertion.
+No email ownership verification gate existed before DB write.
+
+RESOLUTION: Redis-Hold Pattern (2-Step Registration)
+Replaced single /register endpoint with two strictly dependent endpoints:
+
+Step 1: POST /api/v1/auth/register/init
+  - Validates input payload
+  - Checks if email already registered in PostgreSQL (BUG-02 fix)
+  - Checks if registration already pending in Redis
+  - Generates 6-digit OTP
+  - Stores ENTIRE payload + hashed OTP in Redis (Key: reg_pending:<email>)
+  - TTL: 300 seconds (5 minutes)
+  - Sends OTP via Nodemailer (Ocean Blue template)
+  - ZERO PostgreSQL INSERT — no database pollution
+
+Step 2: POST /api/v1/auth/register/complete
+  - Validates OTP against Redis reg_pending:<email>
+  - On success: retrieves stored payload from Redis
+  - Executes BEGIN...COMMIT transaction in PostgreSQL
+  - Inserts into 4 tables atomically (users, profiles, relationships, consents)
+  - On failure: ROLLBACK entire transaction
+  - Deletes Redis key on success
+  - Returns handles + child PIN
+
+FILES MODIFIED:
+  1. src/services/redis-hold.service.ts   | 1.0.0 → 1.0.1 | NEW + FIXED
+  2. src/services/registration.service.ts  | 1.0.0 → 1.1.0 | UPDATED
+  3. src/controllers/auth.controller.ts    | 1.2.1 → 1.3.0 | UPDATED
+  4. src/routes/auth.routes.ts            | 1.2.0 → 1.3.0 | UPDATED
+
+COMMITS:
+  6831486 fix(auth): ARCH-01 - split registration into 2-step redis-hold pattern
+  28252f5 fix(auth): add email existence check in postgresql before sending registration otp
+
+
+======================================================================
+BUG-02: OTP Sent to Already Registered Email (Medium)
+======================================================================
+
+SEVERITY: Medium
+STATUS:   RESOLVED
+
+DESCRIPTION:
+After ARCH-01 fix, the /register/init endpoint checked Redis for
+pending registration but did NOT check PostgreSQL for existing users.
+This caused OTP to be sent to already registered emails. When the user
+entered the OTP in /register/complete, the DB transaction failed with
+"duplicate key value violates unique constraint uq_users_email".
+
+Result: User received OTP but could never complete registration.
+        Wasted OTP, confusing UX, unnecessary Redis storage.
+
+ROOT CAUSE:
+initiateRegistration() function in redis-hold.service.ts had only
+one check: Redis pending key. No PostgreSQL SELECT on users table.
+
+RESOLUTION:
+Added PostgreSQL email existence check as FIRST validation gate in
+initiateRegistration():
+
+  CHECK 1: PostgreSQL — does email exist in auth_schema.users?
+           YES → Return error: "This email is already registered."
+           NO  → Continue
+
+  CHECK 2: Redis — is registration already pending for this email?
+           YES → Return error: "Already in progress."
+           NO  → Continue
+
+  CHECK 3: Both clear → Generate OTP, store in Redis, send email
+
+Now OTP is NEVER sent to already registered emails.
+
+FILE MODIFIED:
+  src/services/redis-hold.service.ts | 1.0.0 → 1.0.1
+
+COMMIT:
+  28252f5 fix(auth): add email existence check in postgresql before sending registration otp
+
+
+======================================================================
+VERIFICATION CHECKLIST (Before + After)
+======================================================================
+
+CHECK                          | BEFORE (Broken)    | AFTER (Fixed)
+-------------------------------|--------------------|-----------------------
+OTP to already registered email| YES (Bug)          | NO (Error message)
+DB insert without OTP verify   | YES (Bug)          | NO (Redis gate first)
+Spam accounts possible         | YES                | NO
+Orphan accounts possible       | YES                | NO
+Transaction safety             | YES                | YES (unchanged)
+Redis-Hold TTL                 | N/A                | 300 seconds
+Zero DB until OTP verified     | NO                 | YES
+
+
+======================================================================
+TEST RESULTS (After Fix)
+======================================================================
+
+TEST 1: Already Registered Email
+  Request:  POST /api/v1/auth/register/init
+            {"email":"koushal2023@gmail.com", ...}
+  Response: {"error":"This email is already registered. Please login instead."}
+  Result:   PASS — OTP not sent, Redis not touched, DB not queried for INSERT
+
+TEST 2: Fresh Registration (2-Step)
+  Step 1:  POST /api/v1/auth/register/init
+           {"parent_name":"Test","email":"koushal2023@gmail.com", ...}
+  Response: {"message":"OTP sent to your email..."}
+  Result:   PASS — OTP sent, payload stored in Redis
+
+  Step 2:  POST /api/v1/auth/register/complete
+           {"email":"koushal2023@gmail.com","otp":"737446"}
+  Response: {"message":"Registration successful","parent_handle":"parent_fvtarnjo", ...}
+  Result:   PASS — All 4 tables populated, Redis key deleted
+
+TEST 3: Duplicate Pending Registration
+  Request:  POST /api/v1/auth/register/init (same email within 5 min)
+  Response: {"error":"A registration is already in progress..."}
+  Result:   PASS — Spam prevention working
+
+TEST 4: Invalid OTP
+  Request:  POST /api/v1/auth/register/complete
+           {"email":"...","otp":"000000"}
+  Response: {"error":"Invalid or expired OTP..."}
+  Result:   PASS — Wrong OTP rejected
+
+
+======================================================================
+CURRENT API ENDPOINTS (After Fix)
+======================================================================
+
+Method | Endpoint                              | Status
+-------|---------------------------------------|--------
+POST   | /api/v1/auth/register/init            | LIVE + FIXED
+POST   | /api/v1/auth/register/complete        | LIVE + FIXED
+POST   | /api/v1/auth/parent/login             | LIVE
+POST   | /api/v1/auth/student/login            | LIVE
+POST   | /api/v1/auth/otp/send                 | LIVE
+POST   | /api/v1/auth/otp/verify               | LIVE
+POST   | /api/v1/auth/parent/register/options  | LIVE
+POST   | /api/v1/auth/parent/register/verify   | LIVE
+POST   | /api/v1/auth/token/refresh            | LIVE
+GET    | /health                               | LIVE
+
+
+======================================================================
+FILE ACCESS INSTRUCTIONS
+----------------------------------------------------------------------
+All bug fix files have been handed over to Mediator Sir.
+For any file review: Contact Mediator.
+For any new bug/issue: Message developer via Mediator.
+
+
+SIGN-OFF
+----------------------------------------------------------------------
+Developer:    Koushal Jha
+Signature:    ________________________________
+Date:         2026-06-07
+
+Approved By:  ________________________________
+              Lead Architect / Technical Director
+Date:         ________________________________
+
+
+======================================================================
+END OF REPORT
+======================================================================
