@@ -13,6 +13,7 @@
  * Version 1.1.1 | Updated import path — Changed from api.config.dart to api_config.dart per snake_case convention
  * Version 1.2.0 | Added named routing — Replaced home with initialRoute and routes map using AppRoutes constants
  * Version 1.2.1 | Registered StudentLoginScreen route — Added to routes map
+ * Version 1.2.2 | Registered ParentRegistrationScreen route — Added to routes map
  * 
  * Aim: Application Entry Point with Secure Boot and Named Routing
  * Why: To ensure ApiConfig loads environment variables before any widget renders,
@@ -27,6 +28,7 @@ import 'core/routes/app_routes.dart';
 import 'features/auth/presentation/role_selection_screen.dart';
 import 'features/auth/presentation/parent_login_screen.dart';
 import 'features/auth/presentation/student_login_screen.dart';
+import 'features/auth/presentation/parent_registration_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +48,7 @@ class KoshivApp extends StatelessWidget {
         AppRoutes.roleSelection: (context) => const RoleSelectionScreen(),
         AppRoutes.parentLogin: (context) => const ParentLoginScreen(),
         AppRoutes.studentLogin: (context) => const StudentLoginScreen(),
+        AppRoutes.parentRegister: (context) => const ParentRegistrationScreen(),
       },
     );
   }
