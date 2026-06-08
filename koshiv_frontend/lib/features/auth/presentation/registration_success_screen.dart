@@ -9,10 +9,12 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Registration Success Screen — Displays child handle and PIN
+ * Version 1.1.0 | Added email notification message — Informs parent to check email for credentials
  * 
  * Aim: Registration Success UI — COPPA-Compliant Credential Display
  * Why: To display the auto-generated child handle and PIN immediately after
- *      successful registration. Parent must save these for child login.
+ *      successful registration. Also reminds parent to check email
+ *      for the same credentials sent via email.
  * ============================================================
  */
 
@@ -22,11 +24,13 @@ import 'parent_login_screen.dart';
 class RegistrationSuccessScreen extends StatelessWidget {
   final String childHandle;
   final String childPin;
+  final String parentEmail;
 
   const RegistrationSuccessScreen({
     super.key,
     required this.childHandle,
     required this.childPin,
+    required this.parentEmail,
   });
 
   @override
@@ -64,7 +68,33 @@ class RegistrationSuccessScreen extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 12),
+
+              // Email Notification Message
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.email_outlined, color: Colors.blue.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Credentials also sent to $parentEmail. Please check your inbox.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.blue.shade700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
 
               // Child Handle
               Container(

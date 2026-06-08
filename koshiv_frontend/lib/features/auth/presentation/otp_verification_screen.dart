@@ -10,11 +10,12 @@
  * Complete Version Tracing:
  * Version 1.0.0 | Initial OTP Verification Screen — 6-digit box UI with resend timer
  * Version 1.1.0 | Integrated AuthRepository.registerComplete API call with loading state and error handling
+ * Version 1.1.1 | Pass parentEmail to RegistrationSuccessScreen for email notification message
  * 
  * Aim: OTP Verification UI (Step 2 of Parent Registration)
  * Why: To verify parent email via 6-digit OTP before completing registration.
  *      Calls POST /api/v1/auth/register/complete and navigates to success screen
- *      with child handle and PIN on success.
+ *      with child handle, PIN, and parent email on success.
  * ============================================================
  */
 
@@ -119,6 +120,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           builder: (context) => RegistrationSuccessScreen(
             childHandle: childHandle,
             childPin: childPin,
+            parentEmail: widget.email,
           ),
         ),
       );
