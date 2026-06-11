@@ -60,6 +60,8 @@ flutter:
   uses-material-design: true
   assets:
     - .env
+    - assets/images/student_avatar.png
+    - assets/images/parent_avatar.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
