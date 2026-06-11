@@ -16,17 +16,19 @@
  * Version 2.0.1 | Responsive layout — Dynamic measurements via MediaQuery, floating label inputs
  * Version 2.0.2 | Replaced student icon with custom avatar image from assets
  * Version 2.0.3 | Replaced parent icon with custom family avatar image from assets
+ * Version 2.1.0 | Added typewriter effect for Welcome Back, fade-in for subtitle, pulse animation for role prompt, removed all arrows from cards and prompt
  * 
  * Aim: Unified Role Selection + Authentication Screen
- * Why: To provide an engaging, responsive, child-friendly role selection experience.
- *      Uses custom cartoon avatars for both student and parent cards.
- *      Dynamic measurements ensure perfect fit across all device sizes.
+ * Why: Delightful animated entry with typewriter text and subtle pulse guide.
+ *      Clean minimal cards with custom avatars, no distracting arrows.
+ *      Dynamic responsive layout for all screen sizes.
  *      Maintains strict RBAC and COPPA data isolation.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
+import 'dart:async';
 import '../../../core/routes/app_routes.dart';
 
 class RoleSelectionScreen extends StatefulWidget {
@@ -51,6 +53,13 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
   bool _obscurePassword = true;
   bool _obscurePin = true;
 
+  // Typewriter animation
+  String _displayedTitle = '';
+  bool _showSubtitle = false;
+  int _charIndex = 0;
+  final String _fullTitle = 'Welcome Back!';
+  Timer? _typewriterTimer;
+
   @override
   void initState() {
     super.initState();
@@ -66,10 +75,33 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
       parent: _animationController,
       curve: const Interval(0.2, 1.0, curve: Curves.easeOutCubic),
     );
+    _startTypewriter();
+  }
+
+  void _startTypewriter() {
+    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
+      if (_charIndex < _fullTitle.length) {
+        setState(() {
+          _displayedTitle += _fullTitle[_charIndex];
+          _charIndex++;
+        });
+      } else {
+        timer.cancel();
+        // Show subtitle after typewriter completes
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (mounted) {
+            setState(() {
+              _showSubtitle = true;
+            });
+          }
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
+    _typewriterTimer?.cancel();
     _animationController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -163,6 +195,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
           children: [
             SizedBox(height: _screenHeight(context) * 0.05),
 
+            // Koshiv Branding
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -192,8 +225,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
 
             SizedBox(height: _screenHeight(context) * 0.06),
 
+            // Typewriter Title
             Text(
-              'Welcome Back!',
+              _displayedTitle,
               style: TextStyle(
                 fontSize: _responsiveFont(32, context),
                 fontWeight: FontWeight.bold,
@@ -201,16 +235,34 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
               ),
             ),
             SizedBox(height: 8 * scale),
-            Text(
-              'Who is learning today?',
-              style: TextStyle(
-                fontSize: _responsiveFont(16, context),
-                color: Colors.white.withAlpha((0.70 * 255).round()),
+
+            // Subtitle with fade-in
+            AnimatedOpacity(
+              opacity: _showSubtitle ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 600),
+              child: Text(
+                'Who is learning today?',
+                style: TextStyle(
+                  fontSize: _responsiveFont(16, context),
+                  color: Colors.white.withAlpha((0.70 * 255).round()),
+                ),
               ),
             ),
 
-            SizedBox(height: _screenHeight(context) * 0.05),
+            SizedBox(height: _screenHeight(context) * 0.04),
 
+            // Please select your role — gentle pulse
+            _showSubtitle
+                ? _PulseText(
+                    text: 'Please select your role',
+                    fontSize: _responsiveFont(14, context),
+                    color: Colors.white.withAlpha((0.60 * 255).round()),
+                  )
+                : const SizedBox(height: 20),
+
+            SizedBox(height: _screenHeight(context) * 0.03),
+
+            // Two Role Cards
             Row(
               children: [
                 Expanded(child: _buildRoleCard(context, 'student', scale)),
@@ -221,6 +273,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
 
             SizedBox(height: _screenHeight(context) * 0.05),
 
+            // Footer
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -265,66 +318,67 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
 
     return GestureDetector(
       onTap: () => _onRoleSelected(role),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        padding: EdgeInsets.symmetric(
-          vertical: 28 * scale,
-          horizontal: 16 * scale,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white.withAlpha((0.12 * 255).round()),
-          borderRadius: BorderRadius.circular(24 * scale),
-          border: Border.all(
-            color: Colors.white.withAlpha((0.25 * 255).round()),
-            width: 1.5,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 1.0, end: 1.0),
+        duration: const Duration(milliseconds: 150),
+        builder: (context, value, child) {
+          return Transform.scale(scale: value, child: child);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          padding: EdgeInsets.symmetric(
+            vertical: 28 * scale,
+            horizontal: 16 * scale,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha((0.10 * 255).round()),
-              blurRadius: 15 * scale,
-              offset: Offset(0, 8 * scale),
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha((0.12 * 255).round()),
+            borderRadius: BorderRadius.circular(24 * scale),
+            border: Border.all(
+              color: Colors.white.withAlpha((0.25 * 255).round()),
+              width: 1.5,
             ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: circleSize,
-              height: circleSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: color.withAlpha((0.20 * 255).round()),
-                border: Border.all(color: color, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha((0.10 * 255).round()),
+                blurRadius: 15 * scale,
+                offset: Offset(0, 8 * scale),
               ),
-              child: ClipOval(
-                child: Image.asset(
-                  imagePath,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Icon(fallbackIcon, size: circleSize * 0.50, color: color);
-                  },
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: circleSize,
+                height: circleSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color.withAlpha((0.20 * 255).round()),
+                  border: Border.all(color: color, width: 2),
+                ),
+                child: ClipOval(
+                  child: Image.asset(
+                    imagePath,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Icon(fallbackIcon, size: circleSize * 0.50, color: color);
+                    },
+                  ),
                 ),
               ),
-            ),
-            SizedBox(height: 16 * scale),
-            Text(
-              'Login as\n$label',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: _responsiveFont(16, context),
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-                height: 1.4,
+              SizedBox(height: 16 * scale),
+              Text(
+                'Login as\n$label',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: _responsiveFont(16, context),
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                  height: 1.4,
+                ),
               ),
-            ),
-            SizedBox(height: 8 * scale),
-            Icon(
-              Icons.arrow_forward_rounded,
-              color: Colors.white.withAlpha((0.60 * 255).round()),
-              size: 20 * scale,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -591,6 +645,60 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
         contentPadding: EdgeInsets.symmetric(
           horizontal: 16 * scale,
           vertical: 16 * scale,
+        ),
+      ),
+    );
+  }
+}
+
+// ===== PULSE TEXT WIDGET =====
+
+class _PulseText extends StatefulWidget {
+  final String text;
+  final double fontSize;
+  final Color color;
+
+  const _PulseText({
+    required this.text,
+    required this.fontSize,
+    required this.color,
+  });
+
+  @override
+  State<_PulseText> createState() => _PulseTextState();
+}
+
+class _PulseTextState extends State<_PulseText> with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1800),
+      vsync: this,
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _pulseAnimation,
+      child: Text(
+        widget.text,
+        style: TextStyle(
+          fontSize: widget.fontSize,
+          color: widget.color,
         ),
       ),
     );
