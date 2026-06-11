@@ -13,12 +13,14 @@
  * Version 1.2.0 | Added registerParent handler — transactional parent+child registration with handle generation
  * Version 1.2.1 | Fix: Updated FIDO2 import to verifyAndStoreCredential, removed deprecated verifyFido2RegistrationResponse
  * Version 1.3.0 | ARCH-01 Fix: Split registration into registerInit (Redis-Hold + OTP email) and registerComplete (OTP verify + DB transaction)
- * Version 1.3.1 | FEAT: Added credentials email dispatch after successful registration — parent receives child handle + PIN via email
+ * Version 1.3.1 | FEAT: Added credentials email dispatch after successful registration
+ * Version 1.3.2 | PERF FIX: registerInit now responds immediately after Redis store, sends email asynchronously to prevent mobile timeout
  *
  * Aim: Authentication HTTP Request/Response Handler
  * Why: Handles parent login, student login, 2-step parent+child registration
  *      (Redis-Hold pattern), FIDO2/WebAuthn, and token refresh.
- *      Sends child credentials email after successful registration.
+ *      registerInit responds in <500ms (Redis only), email sent non-blocking.
+ *      registerComplete sends child credentials email after DB commit.
  *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
@@ -66,9 +68,13 @@ const getUserAgent = (req: Request): string => {
  * Body: { parent_name, email, password, phone_number?, child_name, child_dob?, child_grade? }
  *
  * Step 1 of 2: Redis-Hold Pattern.
- * Validates payload → generates OTP → stores payload+hashedOTP in Redis (5-min TTL) →
- * sends OTP via email. ZERO PostgreSQL interaction.
- * Returns success message, no sensitive data.
+ * 1. Validate payload
+ * 2. Check DB + Redis (initiateRegistration)
+ * 3. Store payload+hashedOTP in Redis (<100ms)
+ * 4. RESPOND IMMEDIATELY with 200 (mobile timeout avoidance)
+ * 5. Send OTP email ASYNCHRONOUSLY (non-blocking, ~2-5s)
+ *
+ * ZERO PostgreSQL INSERT. Fast response for mobile apps.
  */
 export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
@@ -97,18 +103,23 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const emailSent = await sendOtpEmail(email, result.rawOtp);
-
-    if (!emailSent) {
-      logger.error({ email }, 'Failed to send registration OTP email');
-      res.status(500).json({ error: 'Failed to send OTP email. Please try again.' });
-      return;
-    }
-
-    logger.info({ email }, 'Registration initiated — OTP sent via email');
+    // RESPOND IMMEDIATELY — don't wait for email
     res.status(200).json({
       message: 'OTP sent to your email. Please verify to complete registration.',
     });
+
+    // Send email asynchronously (non-blocking)
+    sendOtpEmail(email, result.rawOtp)
+      .then((sent) => {
+        if (sent) {
+          logger.info({ email }, 'Registration OTP email dispatched asynchronously');
+        } else {
+          logger.error({ email }, 'Failed to send registration OTP email asynchronously');
+        }
+      })
+      .catch((emailError) => {
+        logger.error({ err: emailError, email }, 'Async OTP email dispatch failed');
+      });
   } catch (error) {
     logger.error({ err: error }, 'Registration init failed');
     res.status(500).json({ error: 'Registration failed. Please try again.' });
@@ -150,21 +161,26 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    logger.info({ email }, 'Registration completed successfully — sending credentials email');
+    logger.info({ email }, 'Registration completed successfully');
 
-    // Send child credentials via email (non-blocking — don't fail registration if email fails)
-    try {
-      await sendCredentialsEmail(email, {
-        parent_name: payload.parent_name,
-        parent_handle: result.parent_handle!,
-        child_name: payload.child_name,
-        child_handle: result.child_handle!,
-        child_pin: result.child_pin!,
+    // Send credentials email asynchronously (non-blocking)
+    sendCredentialsEmail(email, {
+      parent_name: payload.parent_name,
+      parent_handle: result.parent_handle!,
+      child_name: payload.child_name,
+      child_handle: result.child_handle!,
+      child_pin: result.child_pin!,
+    })
+      .then((sent) => {
+        if (sent) {
+          logger.info({ email }, 'Child credentials email dispatched asynchronously');
+        } else {
+          logger.error({ email }, 'Failed to send credentials email asynchronously');
+        }
+      })
+      .catch((emailError) => {
+        logger.error({ err: emailError, email }, 'Async credentials email dispatch failed');
       });
-      logger.info({ email }, 'Child credentials email dispatched');
-    } catch (emailError) {
-      logger.error({ err: emailError, email }, 'Failed to send credentials email — but registration is complete');
-    }
 
     res.status(201).json({
       message: 'Registration successful',
