@@ -13,13 +13,13 @@
  * Version 1.2.0 | Added registerParent handler — transactional parent+child registration with handle generation
  * Version 1.2.1 | Fix: Updated FIDO2 import to verifyAndStoreCredential, removed deprecated verifyFido2RegistrationResponse
  * Version 1.3.0 | ARCH-01 Fix: Split registration into registerInit (Redis-Hold + OTP email) and registerComplete (OTP verify + DB transaction)
+ * Version 1.3.1 | FEAT: Added credentials email dispatch after successful registration — parent receives child handle + PIN via email
  *
  * Aim: Authentication HTTP Request/Response Handler
  * Why: Handles parent login, student login, 2-step parent+child registration
  *      (Redis-Hold pattern), FIDO2/WebAuthn, and token refresh.
- *      Delegates business logic to auth.service.ts, registration.service.ts,
- *      redis-hold.service.ts, jwt.service.ts, and fido2.service.ts.
- *      Never exposes internal error details to client.
+ *      Sends child credentials email after successful registration.
+ *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
 
@@ -30,6 +30,7 @@ import { parentLogin, studentLogin } from '../services/auth.service';
 import { registerParentWithChild } from '../services/registration.service';
 import { initiateRegistration, completeRegistration } from '../services/redis-hold.service';
 import { sendOtpEmail } from '../config/mailer';
+import { sendCredentialsEmail } from '../config/mailer';
 import { generateFido2RegistrationOptions, verifyAndStoreCredential } from '../services/fido2.service';
 
 const logger = pino({
@@ -96,7 +97,6 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Send OTP via email
     const emailSent = await sendOtpEmail(email, result.rawOtp);
 
     if (!emailSent) {
@@ -122,7 +122,8 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
  * Step 2 of 2: Redis-Hold Pattern.
  * Validates OTP against Redis → retrieves stored payload →
  * executes BEGIN...COMMIT transaction in PostgreSQL →
- * deletes Redis key → returns handles + child PIN.
+ * deletes Redis key → sends child credentials via email →
+ * returns handles + child PIN.
  */
 export const registerComplete = async (req: Request, res: Response): Promise<void> => {
   const { email, otp } = req.body;
@@ -134,7 +135,6 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
   }
 
   try {
-    // Validate OTP and get stored payload
     const payload = await completeRegistration(email, otp);
 
     if (!payload) {
@@ -143,7 +143,6 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Execute DB transaction
     const result = await registerParentWithChild(payload);
 
     if (!result.success) {
@@ -151,7 +150,21 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    logger.info({ email }, 'Registration completed successfully');
+    logger.info({ email }, 'Registration completed successfully — sending credentials email');
+
+    // Send child credentials via email (non-blocking — don't fail registration if email fails)
+    try {
+      await sendCredentialsEmail(email, {
+        parent_name: payload.parent_name,
+        parent_handle: result.parent_handle!,
+        child_name: payload.child_name,
+        child_handle: result.child_handle!,
+        child_pin: result.child_pin!,
+      });
+      logger.info({ email }, 'Child credentials email dispatched');
+    } catch (emailError) {
+      logger.error({ err: emailError, email }, 'Failed to send credentials email — but registration is complete');
+    }
 
     res.status(201).json({
       message: 'Registration successful',
