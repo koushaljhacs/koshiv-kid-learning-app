@@ -8,31 +8,26 @@
  * File: lib/features/auth/presentation/role_selection_screen.dart
  * Original File Version: 1.0.0
  * Complete Version Tracing:
- * Version 1.0.0 | Initial Role Selection Screen — Parent/Student login and registration entry points
- * Version 1.1.0 | Wired Login as Parent button to navigate to ParentLoginScreen via AppRoutes
- * Version 1.1.1 | Wired Login as Student button to navigate to StudentLoginScreen via AppRoutes
- * Version 1.1.2 | Wired Register as Parent button to navigate to ParentRegistrationScreen via AppRoutes
- * Version 2.0.0 | Complete redesign — Glassmorphism theme with gradient, role cards, morph animation
- * Version 2.0.1 | Responsive layout — Dynamic measurements via MediaQuery, floating label inputs
- * Version 2.0.2 | Replaced student icon with custom avatar image from assets
- * Version 2.0.3 | Replaced parent icon with custom family avatar image from assets
- * Version 2.1.0 | Added typewriter effect for Welcome Back, fade-in for subtitle, pulse animation for role prompt, removed all arrows from cards and prompt
- * 
- * Aim: Unified Role Selection + Authentication Screen
- * Why: Delightful animated entry with typewriter text and subtle pulse guide.
- *      Clean minimal cards with custom avatars, no distracting arrows.
- *      Dynamic responsive layout for all screen sizes.
- *      Maintains strict RBAC and COPPA data isolation.
+ * Version 1.0.0 | Initial Role Selection Screen
+ * Version 1.1.0 | Wired Login as Parent button
+ * Version 1.1.1 | Wired Login as Student button
+ * Version 1.1.2 | Wired Register as Parent button
+ * Version 2.0.0 | Complete redesign — Glassmorphism theme
+ * Version 2.1.0 | Added typewriter effect and pulse animation
+ * Version 2.2.0 | Layout fixed using IntrinsicHeight
+ * Version 2.3.0 | Figma Pro UI/UX Redesign — Premium Violet-Cyan gradient.
+ * Version 2.4.0 | Solid White Cards — Smart blend workaround to perfectly camouflage JPG white backgrounds.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'dart:async';
+import 'dart:ui';
 import '../../../core/routes/app_routes.dart';
 
 class RoleSelectionScreen extends StatefulWidget {
-  const RoleSelectionScreen({super.key});
+  const RoleSelectionScreen({super.key});   
 
   @override
   State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
@@ -53,7 +48,6 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
   bool _obscurePassword = true;
   bool _obscurePin = true;
 
-  // Typewriter animation
   String _displayedTitle = '';
   bool _showSubtitle = false;
   int _charIndex = 0;
@@ -79,7 +73,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
   }
 
   void _startTypewriter() {
-    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
+    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 80), (
+      timer,
+    ) {
       if (_charIndex < _fullTitle.length) {
         setState(() {
           _displayedTitle += _fullTitle[_charIndex];
@@ -87,7 +83,6 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
         });
       } else {
         timer.cancel();
-        // Show subtitle after typewriter completes
         Future.delayed(const Duration(milliseconds: 200), () {
           if (mounted) {
             setState(() {
@@ -157,11 +152,14 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
     }
   }
 
-  double _screenHeight(BuildContext context) => MediaQuery.of(context).size.height;
-  double _screenWidth(BuildContext context) => MediaQuery.of(context).size.width;
-  double _scaleFactor(BuildContext context) => math.min(_screenWidth(context) / 375, 1.15);
-  double _responsiveFont(double size, BuildContext context) => size * _scaleFactor(context);
-  double _circleSize(BuildContext context) => math.min((_screenWidth(context) - 68) / 2 * 0.45, 80);
+  double _screenHeight(BuildContext context) =>
+      MediaQuery.of(context).size.height;
+  double _screenWidth(BuildContext context) =>
+      MediaQuery.of(context).size.width;
+  double _scaleFactor(BuildContext context) =>
+      math.min(_screenWidth(context) / 375, 1.15);
+  double _responsiveFont(double size, BuildContext context) =>
+      size * _scaleFactor(context);
 
   @override
   Widget build(BuildContext context) {
@@ -173,9 +171,14 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
         height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF4A8E9F), Color(0xFF1E4D5D)],
+            colors: [
+              Color(0xFF7F7FD5), // Soft Violet
+              Color(0xFF86A8E7), // Clean Sky Blue
+              Color(0xFF91EAE4), // Fresh Cyan
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
+            stops: [0.0, 0.5, 1.0],
           ),
         ),
         child: SafeArea(
@@ -189,91 +192,133 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
 
   Widget _buildRoleSelectionView(BuildContext context, double scale) {
     return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 24 * scale),
+        padding: EdgeInsets.symmetric(horizontal: 16 * scale),
         child: Column(
           children: [
-            SizedBox(height: _screenHeight(context) * 0.05),
+            SizedBox(height: _screenHeight(context) * 0.04),
 
-            // Koshiv Branding
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.school, color: Colors.white, size: 32 * scale),
-                SizedBox(width: 8 * scale),
-                Text(
-                  'Koshiv',
-                  style: TextStyle(
-                    fontSize: _responsiveFont(28, context),
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    shadows: const [
-                      Shadow(blurRadius: 8, color: Colors.black26, offset: Offset(0, 2)),
+            _FloatingWidget(
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Koshiv',
+                        style: TextStyle(
+                          fontSize: _responsiveFont(36, context),
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          shadows: const [
+                            Shadow(
+                              blurRadius: 12,
+                              color: Colors.black26,
+                              offset: Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(width: 8 * scale),
+                      Icon(Icons.school, color: Colors.white, size: 36 * scale),
                     ],
                   ),
-                ),
-              ],
-            ),
-            SizedBox(height: 4 * scale),
-            Text(
-              'Learning App for Kids',
-              style: TextStyle(
-                fontSize: _responsiveFont(14, context),
-                color: Colors.white.withAlpha((0.70 * 255).round()),
+                  SizedBox(height: 4 * scale),
+                  Text(
+                    'Learning App for Kids',
+                    style: TextStyle(
+                      fontSize: _responsiveFont(16, context),
+                      color: Colors.white.withAlpha((0.90 * 255).round()),
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
               ),
             ),
 
-            SizedBox(height: _screenHeight(context) * 0.06),
+            SizedBox(height: _screenHeight(context) * 0.05),
 
-            // Typewriter Title
             Text(
               _displayedTitle,
               style: TextStyle(
-                fontSize: _responsiveFont(32, context),
+                fontSize: _responsiveFont(34, context),
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
+                shadows: const [
+                  Shadow(
+                    blurRadius: 10,
+                    color: Colors.black26,
+                    offset: Offset(0, 3),
+                  ),
+                ],
               ),
             ),
             SizedBox(height: 8 * scale),
 
-            // Subtitle with fade-in
             AnimatedOpacity(
               opacity: _showSubtitle ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 600),
+              curve: Curves.easeIn,
               child: Text(
                 'Who is learning today?',
                 style: TextStyle(
-                  fontSize: _responsiveFont(16, context),
-                  color: Colors.white.withAlpha((0.70 * 255).round()),
+                  fontSize: _responsiveFont(18, context),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
 
-            SizedBox(height: _screenHeight(context) * 0.04),
+            SizedBox(height: 8 * scale),
 
-            // Please select your role — gentle pulse
             _showSubtitle
                 ? _PulseText(
                     text: 'Please select your role',
-                    fontSize: _responsiveFont(14, context),
-                    color: Colors.white.withAlpha((0.60 * 255).round()),
+                    fontSize: _responsiveFont(16, context),
+                    color: Colors.white.withAlpha((0.85 * 255).round()),
                   )
                 : const SizedBox(height: 20),
 
-            SizedBox(height: _screenHeight(context) * 0.03),
+            SizedBox(height: _screenHeight(context) * 0.04),
 
-            // Two Role Cards
-            Row(
-              children: [
-                Expanded(child: _buildRoleCard(context, 'student', scale)),
-                SizedBox(width: 20 * scale),
-                Expanded(child: _buildRoleCard(context, 'parent', scale)),
-              ],
+            IntrinsicHeight(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch, 
+                children: [
+                  Expanded(
+                    child: _buildExactRoleCard(
+                      context: context,
+                      role: 'student',
+                      title: 'STUDENT\n(छात्र)',
+                      desc: 'Learn with fun, access assignments, and more.',
+                      btnText: "I'M A STUDENT",
+                      btnColor: const Color(0xFF1E607A), // Deep Blue Button
+                      imagePath: 'assets/images/student_avatar.png',
+                      scale: scale,
+                    ),
+                  ),
+                  SizedBox(width: 16 * scale),
+                  Expanded(
+                    child: _buildExactRoleCard(
+                      context: context,
+                      role: 'parent',
+                      title: 'PARENT\n(माता-पिता)',
+                      desc: 'Track progress, receive updates, and guide.',
+                      btnText: "I'M A PARENT",
+                      btnColor: const Color(0xFFECA02B), // Warm Orange Button
+                      imagePath: 'assets/images/parent_avatar.png',
+                      scale: scale,
+                    ),
+                  ),
+                ],
+              ),
             ),
 
             SizedBox(height: _screenHeight(context) * 0.05),
 
-            // Footer
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -281,7 +326,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
                   "Don't have an account? ",
                   style: TextStyle(
                     fontSize: _responsiveFont(15, context),
-                    color: Colors.white.withAlpha((0.70 * 255).round()),
+                    color: Colors.white, 
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
                 GestureDetector(
@@ -293,7 +339,14 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
                     style: TextStyle(
                       fontSize: _responsiveFont(15, context),
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFFFDE47B),
+                      color: const Color(0xFFECA02B), // Matches parent button
+                      shadows: const [
+                        Shadow(
+                          blurRadius: 4,
+                          color: Colors.black26,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -306,79 +359,100 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
     );
   }
 
-  Widget _buildRoleCard(BuildContext context, String role, double scale) {
-    final isStudent = role == 'student';
-    final label = isStudent ? 'Student' : 'Parent';
-    final color = isStudent ? const Color(0xFFFDE47B) : const Color(0xFF7EC8E3);
-    final circleSize = _circleSize(context);
-    final imagePath = isStudent
-        ? 'assets/images/student_avatar.png'
-        : 'assets/images/parent_avatar.png';
-    final fallbackIcon = isStudent ? Icons.child_care : Icons.person;
-
+  Widget _buildExactRoleCard({
+    required BuildContext context,
+    required String role,
+    required String title,
+    required String desc,
+    required String btnText,
+    required Color btnColor,
+    required String imagePath,
+    required double scale,
+  }) {
     return GestureDetector(
       onTap: () => _onRoleSelected(role),
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 1.0, end: 1.0),
-        duration: const Duration(milliseconds: 150),
-        builder: (context, value, child) {
-          return Transform.scale(scale: value, child: child);
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          padding: EdgeInsets.symmetric(
-            vertical: 28 * scale,
-            horizontal: 16 * scale,
-          ),
-          decoration: BoxDecoration(
-            color: Colors.white.withAlpha((0.12 * 255).round()),
-            borderRadius: BorderRadius.circular(24 * scale),
-            border: Border.all(
-              color: Colors.white.withAlpha((0.25 * 255).round()),
-              width: 1.5,
+      child: Container(
+        padding: EdgeInsets.all(16 * scale),
+        decoration: BoxDecoration(
+          // SOLID WHITE BACKGROUND: Hides the image's white background completely
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24 * scale),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha((0.15 * 255).round()), 
+              blurRadius: 25 * scale,
+              offset: Offset(0, 10 * scale),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withAlpha((0.10 * 255).round()),
-                blurRadius: 15 * scale,
-                offset: Offset(0, 8 * scale),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 110 * scale,
+              child: Image.asset(
+                imagePath,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    role == 'student' ? Icons.child_care : Icons.family_restroom,
+                    size: 60 * scale,
+                    color: Colors.grey.shade400,
+                  );
+                },
               ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: circleSize,
-                height: circleSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: color.withAlpha((0.20 * 255).round()),
-                  border: Border.all(color: color, width: 2),
-                ),
-                child: ClipOval(
-                  child: Image.asset(
-                    imagePath,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Icon(fallbackIcon, size: circleSize * 0.50, color: color);
-                    },
+            ),
+            SizedBox(height: 16 * scale),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: _responsiveFont(15, context),
+                fontWeight: FontWeight.bold,
+                color: const Color(0xFF1E293B), 
+                height: 1.2,
+              ),
+            ),
+            SizedBox(height: 8 * scale),
+            Text(
+              desc,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: _responsiveFont(11.5, context),
+                color: const Color(0xFF475569), 
+                fontWeight: FontWeight.w500,
+                height: 1.3,
+              ),
+            ),
+            const Spacer(), 
+            SizedBox(height: 16 * scale),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(vertical: 12 * scale),
+              decoration: BoxDecoration(
+                color: btnColor,
+                borderRadius: BorderRadius.circular(30 * scale),
+                boxShadow: [
+                  BoxShadow(
+                    color: btnColor.withAlpha((0.40 * 255).round()),
+                    blurRadius: 10 * scale,
+                    offset: Offset(0, 4 * scale),
+                  )
+                ]
+              ),
+              child: Center(
+                child: Text(
+                  btnText,
+                  style: TextStyle(
+                    fontSize: _responsiveFont(12, context),
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
                   ),
                 ),
               ),
-              SizedBox(height: 16 * scale),
-              Text(
-                'Login as\n$label',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: _responsiveFont(16, context),
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -397,6 +471,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
       child: FadeTransition(
         opacity: _slideAnimation,
         child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: 24 * scale),
             child: Column(
@@ -404,173 +479,205 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
                 SizedBox(height: _screenHeight(context) * 0.04),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.arrow_back_rounded,
-                      color: Colors.white.withAlpha((0.80 * 255).round()),
-                      size: 28 * scale,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(50),
+                      onTap: _onBackToRoles,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Icon(
+                          Icons.arrow_back_rounded,
+                          color: Colors.white,
+                          size: 28 * scale,
+                        ),
+                      ),
                     ),
-                    onPressed: _onBackToRoles,
                   ),
                 ),
                 SizedBox(height: 8 * scale),
 
-                Container(
-                  padding: EdgeInsets.all(24 * scale),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha((0.15 * 255).round()),
-                    borderRadius: BorderRadius.circular(24 * scale),
-                    border: Border.all(
-                      color: Colors.white.withAlpha((0.30 * 255).round()),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withAlpha((0.10 * 255).round()),
-                        blurRadius: 20 * scale,
-                        offset: Offset(0, 10 * scale),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 56 * scale,
-                        height: 56 * scale,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white.withAlpha((0.18 * 255).round()),
-                          border: Border.all(
-                            color: Colors.white.withAlpha((0.30 * 255).round()),
-                            width: 1.5,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(28 * scale),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                    child: Container(
+                      padding: EdgeInsets.all(24 * scale),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withAlpha((0.20 * 255).round()),
+                        borderRadius: BorderRadius.circular(28 * scale),
+                        border: Border.all(
+                          color: Colors.white.withAlpha((0.60 * 255).round()),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withAlpha((0.10 * 255).round()),
+                            blurRadius: 30 * scale,
+                            offset: Offset(0, 15 * scale),
                           ),
-                        ),
-                        child: Icon(roleIcon, size: 28 * scale, color: Colors.white),
+                        ],
                       ),
-                      SizedBox(height: 12 * scale),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: _responsiveFont(26, context),
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      SizedBox(height: 6 * scale),
-                      Text(
-                        subtitle,
-                        style: TextStyle(
-                          fontSize: _responsiveFont(14, context),
-                          color: Colors.white.withAlpha((0.70 * 255).round()),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      SizedBox(height: 24 * scale),
-
-                      if (isParent) ...[
-                        _buildGlassField(
-                          context: context,
-                          controller: _emailController,
-                          label: 'Email Address',
-                          icon: Icons.mail_outline,
-                          keyboardType: TextInputType.emailAddress,
-                          scale: scale,
-                        ),
-                        SizedBox(height: 16 * scale),
-                        _buildGlassField(
-                          context: context,
-                          controller: _passwordController,
-                          label: 'Password',
-                          icon: Icons.lock_outline,
-                          obscureText: _obscurePassword,
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                              color: Colors.white.withAlpha((0.80 * 255).round()),
-                              size: 22 * scale,
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 70 * scale,
+                            height: 70 * scale,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.white.withAlpha((0.50 * 255).round()),
+                                  Colors.white.withAlpha((0.10 * 255).round()),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              border: Border.all(
+                                color: Colors.white.withAlpha((0.80 * 255).round()),
+                                width: 2,
+                              ),
                             ),
-                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                          ),
-                          scale: scale,
-                        ),
-                      ] else ...[
-                        _buildGlassField(
-                          context: context,
-                          controller: _handleController,
-                          label: 'Student Handle',
-                          icon: Icons.person_outline,
-                          autocorrect: false,
-                          scale: scale,
-                        ),
-                        SizedBox(height: 16 * scale),
-                        _buildGlassField(
-                          context: context,
-                          controller: _pinController,
-                          label: 'Secret PIN',
-                          icon: Icons.dialpad,
-                          keyboardType: TextInputType.number,
-                          obscureText: _obscurePin,
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePin ? Icons.visibility_off : Icons.visibility,
-                              color: Colors.white.withAlpha((0.80 * 255).round()),
-                              size: 22 * scale,
+                            child: Icon(
+                              roleIcon,
+                              size: 34 * scale,
+                              color: Colors.white,
                             ),
-                            onPressed: () => setState(() => _obscurePin = !_obscurePin),
                           ),
-                          scale: scale,
-                        ),
-                      ],
-                      SizedBox(height: 24 * scale),
+                          SizedBox(height: 16 * scale),
+                          Text(
+                            title,
+                            style: TextStyle(
+                              fontSize: _responsiveFont(26, context),
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF1E293B),
+                            ),
+                          ),
+                          SizedBox(height: 6 * scale),
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: _responsiveFont(14, context),
+                              color: const Color(0xFF334155),
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: 32 * scale),
 
-                      Container(
-                        width: double.infinity,
-                        height: 55 * scale,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF4A8E9F), Color(0xFF2B6B80)],
-                          ),
-                          borderRadius: BorderRadius.circular(30 * scale),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withAlpha((0.20 * 255).round()),
-                              blurRadius: 10 * scale,
-                              offset: Offset(0, 4 * scale),
+                          if (isParent) ...[
+                            _buildGlassField(
+                              context: context,
+                              controller: _emailController,
+                              label: 'Email Address',
+                              icon: Icons.mail_outline,
+                              keyboardType: TextInputType.emailAddress,
+                              scale: scale,
+                            ),
+                            SizedBox(height: 20 * scale),
+                            _buildGlassField(
+                              context: context,
+                              controller: _passwordController,
+                              label: 'Password',
+                              icon: Icons.lock_outline,
+                              obscureText: _obscurePassword,
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                  color: const Color(0xFF334155),
+                                  size: 22 * scale,
+                                ),
+                                onPressed: () => setState(
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
+                              ),
+                              scale: scale,
+                            ),
+                          ] else ...[
+                            _buildGlassField(
+                              context: context,
+                              controller: _handleController,
+                              label: 'Student Handle',
+                              icon: Icons.person_outline,
+                              autocorrect: false,
+                              scale: scale,
+                            ),
+                            SizedBox(height: 20 * scale),
+                            _buildGlassField(
+                              context: context,
+                              controller: _pinController,
+                              label: 'Secret PIN',
+                              icon: Icons.dialpad,
+                              keyboardType: TextInputType.number,
+                              obscureText: _obscurePin,
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscurePin
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                  color: const Color(0xFF334155),
+                                  size: 22 * scale,
+                                ),
+                                onPressed: () =>
+                                    setState(() => _obscurePin = !_obscurePin),
+                              ),
+                              scale: scale,
                             ),
                           ],
-                        ),
-                        child: ElevatedButton(
-                          onPressed: _handleLogin,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            shape: RoundedRectangleBorder(
+                          SizedBox(height: 32 * scale),
+
+                          Container(
+                            width: double.infinity,
+                            height: 55 * scale,
+                            decoration: BoxDecoration(
+                              color: isParent ? const Color(0xFFECA02B) : const Color(0xFF1E607A),
                               borderRadius: BorderRadius.circular(30 * scale),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: (isParent ? const Color(0xFFECA02B) : const Color(0xFF1E607A)).withAlpha((0.40 * 255).round()),
+                                  blurRadius: 15 * scale,
+                                  offset: Offset(0, 6 * scale),
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(30 * scale),
+                                onTap: _handleLogin,
+                                child: Center(
+                                  child: Text(
+                                    'LOGIN',
+                                    style: TextStyle(
+                                      fontSize: _responsiveFont(18, context),
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      letterSpacing: 1.5,
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                          child: Text(
-                            'LOGIN',
-                            style: TextStyle(
-                              fontSize: _responsiveFont(18, context),
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
 
-                SizedBox(height: 16 * scale),
+                SizedBox(height: 24 * scale),
                 GestureDetector(
                   onTap: () => debugPrint('Navigating to Forgot Password...'),
                   child: Text(
                     'Forgot Password?',
                     style: TextStyle(
                       fontSize: _responsiveFont(15, context),
-                      color: Colors.white.withAlpha((0.70 * 255).round()),
+                      color: Colors.white,
+                      decoration: TextDecoration.underline,
+                      decorationColor: Colors.white,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -594,64 +701,115 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
     Widget? suffixIcon,
     double scale = 1.0,
   }) {
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      obscureText: obscureText,
-      autocorrect: autocorrect,
-      style: TextStyle(
-        color: Colors.white,
-        fontSize: _responsiveFont(16, context),
-      ),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(
-          color: Colors.white.withAlpha((0.70 * 255).round()),
-          fontSize: _responsiveFont(14, context),
-        ),
-        floatingLabelStyle: TextStyle(
-          color: const Color(0xFFFDE47B),
-          fontSize: _responsiveFont(12, context),
-        ),
-        prefixIcon: Icon(
-          icon,
-          color: Colors.white.withAlpha((0.80 * 255).round()),
-          size: 22 * scale,
-        ),
-        suffixIcon: suffixIcon,
-        filled: true,
-        fillColor: Colors.white.withAlpha((0.10 * 255).round()),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14 * scale),
-          borderSide: BorderSide(
-            color: Colors.white.withAlpha((0.25 * 255).round()),
-            width: 1,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16 * scale),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+        child: TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          obscureText: obscureText,
+          autocorrect: autocorrect,
+          style: TextStyle(
+            color: const Color(0xFF1E293B),
+            fontSize: _responsiveFont(16, context),
+            fontWeight: FontWeight.w600,
           ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14 * scale),
-          borderSide: BorderSide(
-            color: Colors.white.withAlpha((0.25 * 255).round()),
-            width: 1,
+          decoration: InputDecoration(
+            labelText: label,
+            labelStyle: TextStyle(
+              color: const Color(0xFF475569),
+              fontSize: _responsiveFont(14, context),
+              fontWeight: FontWeight.w500,
+            ),
+            floatingLabelStyle: TextStyle(
+              color: const Color(0xFF1E607A),
+              fontSize: _responsiveFont(14, context),
+              fontWeight: FontWeight.bold,
+            ),
+            prefixIcon: Icon(
+              icon,
+              color: const Color(0xFF475569),
+              size: 24 * scale,
+            ),
+            suffixIcon: suffixIcon,
+            filled: true,
+            fillColor: Colors.white.withAlpha((0.60 * 255).round()), 
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16 * scale),
+              borderSide: BorderSide(
+                color: Colors.white.withAlpha((0.80 * 255).round()),
+                width: 1.5,
+              ),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16 * scale),
+              borderSide: BorderSide(
+                color: Colors.white.withAlpha((0.80 * 255).round()),
+                width: 1.5,
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16 * scale),
+              borderSide: const BorderSide(color: Color(0xFF1E607A), width: 2.0),
+            ),
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: 16 * scale,
+              vertical: 20 * scale,
+            ),
           ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14 * scale),
-          borderSide: const BorderSide(
-            color: Color(0xFFFDE47B),
-            width: 1.5,
-          ),
-        ),
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: 16 * scale,
-          vertical: 16 * scale,
         ),
       ),
     );
   }
 }
 
-// ===== PULSE TEXT WIDGET =====
+class _FloatingWidget extends StatefulWidget {
+  final Widget child;
+
+  const _FloatingWidget({required this.child});
+
+  @override
+  State<_FloatingWidget> createState() => _FloatingWidgetState();
+}
+
+class _FloatingWidgetState extends State<_FloatingWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _floatController;
+  late Animation<double> _floatAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _floatController = AnimationController(
+      duration: const Duration(seconds: 3),
+      vsync: this,
+    )..repeat(reverse: true);
+    _floatAnimation = Tween<double>(begin: -6.0, end: 6.0).animate(
+      CurvedAnimation(parent: _floatController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _floatController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _floatAnimation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, _floatAnimation.value),
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
 
 class _PulseText extends StatefulWidget {
   final String text;
@@ -668,7 +826,8 @@ class _PulseText extends StatefulWidget {
   State<_PulseText> createState() => _PulseTextState();
 }
 
-class _PulseTextState extends State<_PulseText> with SingleTickerProviderStateMixin {
+class _PulseTextState extends State<_PulseText>
+    with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -697,8 +856,10 @@ class _PulseTextState extends State<_PulseText> with SingleTickerProviderStateMi
       child: Text(
         widget.text,
         style: TextStyle(
-          fontSize: widget.fontSize,
+          fontSize: widget.fontSize, 
           color: widget.color,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.5,
         ),
       ),
     );
