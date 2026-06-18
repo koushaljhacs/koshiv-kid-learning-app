@@ -7,7 +7,7 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/parent_registration_screen.dart
  * Original File Version: 1.0.0
- * Current File Version: 2.0.0
+ * Current File Version: 2.0.1
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Parent Registration UI — Form fields for user data collection
  * Version 1.1.0 | Updated form fields per backend API spec
@@ -16,12 +16,13 @@
  * Version 1.3.0 | Added real-time email format validation on focus loss
  * Version 1.4.0 | Added inline email error display
  * Version 1.5.0 | Added real-time email availability check with debounce
- * Version 2.0.0 | Complete UI Redesign — Premium gradient, unified white card, proper styled back button with icon+label+outline, bottom buttons, removed autofocus, premium colored icons, decorative dividers, required asterisks, smooth transition
+ * Version 2.0.0 | Complete UI Redesign — Premium gradient, unified white card, proper styled back button, bottom buttons, removed autofocus, premium colored icons
+ * Version 2.0.1 | Added email_dispatched flag check in _handleSendOtp — Only navigates to OTP screen when email actually dispatched, shows inline error on failure
  * 
  * Aim: Premium Parent Registration UI — Koshiv Design System
  * Why: Proper outlined back button with arrow icon + label for professional look.
  *      Premium styled icons in soft colored containers.
- *      All previous functionality preserved.
+ *      email_dispatched flag ensures OTP screen only opens when email sent.
  * ============================================================
  */
 
@@ -82,9 +83,9 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
   Future<void> _checkEmailAvailability(String email) async {
     try {
-      await _authRepository.registerInit({'parent_name': '_check_', 'email': email, 'password': '_check_', 'child_name': '_check_'});
+      final dispatched = await _authRepository.registerInit({'parent_name': '_check_', 'email': email, 'password': '_check_', 'child_name': '_check_'});
       if (!mounted) return;
-      setState(() { _emailError = null; _isCheckingEmail = false; _isEmailAvailable = true; _showEmailStatus = true; });
+      setState(() { _emailError = null; _isCheckingEmail = false; _isEmailAvailable = dispatched; _showEmailStatus = dispatched; });
     } catch (e) {
       if (!mounted) return;
       final m = e.toString().replaceAll('Exception: ', '');
@@ -137,22 +138,28 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       if (phone.isNotEmpty) payload['phone_number'] = phone;
       if (childDob.isNotEmpty) payload['child_dob'] = childDob;
       if (childGrade.isNotEmpty) payload['child_grade'] = childGrade;
-      await _authRepository.registerInit(payload);
+
+      final emailDispatched = await _authRepository.registerInit(payload);
       if (!mounted) return;
-      Navigator.push(context, PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 400),
-        pageBuilder: (_, __, ___) => OtpVerificationScreen(email: email),
-        transitionsBuilder: (_, animation, __, child) {
-          return FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween<Offset>(begin: const Offset(0.0, 0.08), end: Offset.zero)
-                  .animate(CurvedAnimation(parent: animation, curve: Curves.easeInOut)),
-              child: child,
-            ),
-          );
-        },
-      ));
+
+      if (emailDispatched) {
+        Navigator.push(context, PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 400),
+          pageBuilder: (_, __, ___) => OtpVerificationScreen(email: email),
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(begin: const Offset(0.0, 0.08), end: Offset.zero)
+                    .animate(CurvedAnimation(parent: animation, curve: Curves.easeInOut)),
+                child: child,
+              ),
+            );
+          },
+        ));
+      } else {
+        setState(() => _emailError = 'Failed to send OTP. Please try again.');
+      }
     } catch (e) {
       if (!mounted) return;
       final m = e.toString().replaceAll('Exception: ', '');
@@ -185,7 +192,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              // Proper Back Button
               Padding(
                 padding: EdgeInsets.fromLTRB(14 * s, 10 * s, 14 * s, 0),
                 child: Row(
@@ -253,7 +259,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                             _sectionDivider(s: s),
                             SizedBox(height: sh * 0.018),
 
-                            // Parent Details
                             _sectionHeader(title: 'Parent Details', required: true, s: s),
                             SizedBox(height: 10 * s),
                             _buildInput(controller: _parentNameController, label: 'Full Name', icon: Icons.person_outline, iconColor: const Color(0xFF6366F1), required: true, s: s),
@@ -281,7 +286,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                             _sectionDivider(s: s),
                             SizedBox(height: sh * 0.018),
 
-                            // Child Details
                             _sectionHeader(title: 'Child Details', required: true, s: s),
                             SizedBox(height: 10 * s),
                             _buildInput(controller: _childNameController, label: 'Child Full Name', icon: Icons.child_care, iconColor: const Color(0xFFEC4899), required: true, s: s),
@@ -297,7 +301,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                 ),
               ),
 
-              // Bottom Buttons
               Container(
                 padding: EdgeInsets.fromLTRB(14 * s, 10 * s, 14 * s, 14 * s),
                 decoration: BoxDecoration(color: Colors.white.withAlpha(15)),
