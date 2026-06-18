@@ -14,13 +14,14 @@
  * Version 1.2.1 | Fix: Updated FIDO2 import to verifyAndStoreCredential, removed deprecated verifyFido2RegistrationResponse
  * Version 1.3.0 | ARCH-01 Fix: Split registration into registerInit (Redis-Hold + OTP email) and registerComplete (OTP verify + DB transaction)
  * Version 1.3.1 | FEAT: Added credentials email dispatch after successful registration
- * Version 1.3.2 | PERF FIX: registerInit now responds immediately after Redis store, sends email asynchronously to prevent mobile timeout
+ * Version 1.3.2 | PERF FIX: registerInit responds immediately after Redis store, sends email asynchronously to prevent mobile timeout
+ * Version 1.3.3 | UX FIX: registerInit now sends email synchronously WITH email_dispatched flag in response. Frontend shows SnackBar on failure, OTP screen only on success.
  *
  * Aim: Authentication HTTP Request/Response Handler
  * Why: Handles parent login, student login, 2-step parent+child registration
  *      (Redis-Hold pattern), FIDO2/WebAuthn, and token refresh.
- *      registerInit responds in <500ms (Redis only), email sent non-blocking.
- *      registerComplete sends child credentials email after DB commit.
+ *      registerInit sends email SYNCHRONOUSLY and returns email_dispatched flag.
+ *      Frontend uses this flag to decide OTP screen vs error SnackBar.
  *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
@@ -70,11 +71,14 @@ const getUserAgent = (req: Request): string => {
  * Step 1 of 2: Redis-Hold Pattern.
  * 1. Validate payload
  * 2. Check DB + Redis (initiateRegistration)
- * 3. Store payload+hashedOTP in Redis (<100ms)
- * 4. RESPOND IMMEDIATELY with 200 (mobile timeout avoidance)
- * 5. Send OTP email ASYNCHRONOUSLY (non-blocking, ~2-5s)
+ * 3. Store payload+hashedOTP in Redis
+ * 4. Send OTP email SYNCHRONOUSLY
+ * 5. Respond with email_dispatched flag
  *
- * ZERO PostgreSQL INSERT. Fast response for mobile apps.
+ * Response:
+ *   200 OK + email_dispatched:true  → Frontend opens OTP screen
+ *   200 OK + email_dispatched:false → Frontend shows SnackBar error
+ *   4xx/5xx                          → Frontend shows error via DioException
  */
 export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
@@ -103,23 +107,22 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // RESPOND IMMEDIATELY — don't wait for email
-    res.status(200).json({
-      message: 'OTP sent to your email. Please verify to complete registration.',
-    });
+    // Send email synchronously — frontend needs to know if email actually dispatched
+    const emailSent = await sendOtpEmail(email, result.rawOtp);
 
-    // Send email asynchronously (non-blocking)
-    sendOtpEmail(email, result.rawOtp)
-      .then((sent) => {
-        if (sent) {
-          logger.info({ email }, 'Registration OTP email dispatched asynchronously');
-        } else {
-          logger.error({ email }, 'Failed to send registration OTP email asynchronously');
-        }
-      })
-      .catch((emailError) => {
-        logger.error({ err: emailError, email }, 'Async OTP email dispatch failed');
+    if (emailSent) {
+      logger.info({ email }, 'Registration OTP email dispatched successfully');
+      res.status(200).json({
+        message: 'OTP sent to your email. Please verify to complete registration.',
+        email_dispatched: true,
       });
+    } else {
+      logger.error({ email }, 'Registration OTP email dispatch failed — SMTP error');
+      res.status(200).json({
+        message: 'Failed to send OTP. Please try again.',
+        email_dispatched: false,
+      });
+    }
   } catch (error) {
     logger.error({ err: error }, 'Registration init failed');
     res.status(500).json({ error: 'Registration failed. Please try again.' });
@@ -163,7 +166,7 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
 
     logger.info({ email }, 'Registration completed successfully');
 
-    // Send credentials email asynchronously (non-blocking)
+    // Send credentials email (non-blocking — response already prepared)
     sendCredentialsEmail(email, {
       parent_name: payload.parent_name,
       parent_handle: result.parent_handle!,
@@ -173,13 +176,13 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
     })
       .then((sent) => {
         if (sent) {
-          logger.info({ email }, 'Child credentials email dispatched asynchronously');
+          logger.info({ email }, 'Child credentials email dispatched');
         } else {
-          logger.error({ email }, 'Failed to send credentials email asynchronously');
+          logger.error({ email }, 'Failed to send credentials email');
         }
       })
       .catch((emailError) => {
-        logger.error({ err: emailError, email }, 'Async credentials email dispatch failed');
+        logger.error({ err: emailError, email }, 'Credentials email dispatch failed');
       });
 
     res.status(201).json({

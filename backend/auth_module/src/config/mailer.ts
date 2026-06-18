@@ -11,13 +11,12 @@
  * Version 1.0.0 | Initial Nodemailer transporter — Gmail SMTP relay
  * Version 1.1.0 | Upgraded OTP HTML template to Ocean Blue 6-digit array-style boxes with no-reply sender
  * Version 1.2.0 | Added sendCredentialsEmail — sends child handle + PIN to parent after successful registration
+ * Version 1.2.1 | FIX: Added SMTP connection pooling (pool:true, maxConnections:3) to prevent ECONNRESET, added retry logic on first failure
  *
  * Aim: Email Transporter Configuration
- * Why: Creates a reusable Nodemailer transporter using Gmail SMTP.
- *      Used by OTP service to send branded OTP emails to parents.
- *      Also sends child login credentials after successful registration.
- *      Features Ocean Blue professional template with individual
- *      6-digit OTP boxes and security notice in footer.
+ * Why: Creates a reusable Nodemailer transporter using Gmail SMTP with
+ *      connection pooling to prevent ECONNRESET errors. Sends branded
+ *      OTP and credentials emails. Retries once on connection failure.
  *      Sender uses no-reply@koshiv.com branding.
  *      Credentials loaded from .env (never committed).
  * ============================================================
@@ -49,13 +48,19 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  pool: true,
+  maxConnections: 3,
+  maxMessages: Infinity,
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 });
 
 transporter.verify((error) => {
   if (error) {
     logger.error({ err: error }, 'SMTP transporter verification failed');
   } else {
-    logger.info('SMTP transporter ready to send emails');
+    logger.info('SMTP transporter ready to send emails (pooled, max 3 connections)');
   }
 });
 
@@ -125,23 +130,38 @@ const generateOtpHtml = (otp: string): string => {
 </html>`;
 };
 
+/**
+ * Send OTP email with retry on connection failure.
+ * First attempt: normal send. If ECONNRESET, retry once after 500ms delay.
+ */
 export const sendOtpEmail = async (to: string, otp: string): Promise<boolean> => {
+  const htmlContent = generateOtpHtml(otp);
+
+  const mailOptions = {
+    from: `"koshiv Accounts" <${process.env.EMAIL_FROM}>`,
+    to,
+    subject: 'Your OTP for koshiv Verification',
+    text: `Your OTP is: ${otp}. It expires in 5 minutes. Do not share this code with anyone.`,
+    html: htmlContent,
+  };
+
   try {
-    const htmlContent = generateOtpHtml(otp);
-
-    const info = await transporter.sendMail({
-      from: `"koshiv Accounts" <${process.env.EMAIL_FROM}>`,
-      to,
-      subject: 'Your OTP for koshiv Verification',
-      text: `Your OTP is: ${otp}. It expires in 5 minutes. Do not share this code with anyone.`,
-      html: htmlContent,
-    });
-
+    const info = await transporter.sendMail(mailOptions);
     logger.info({ to, messageId: info.messageId }, 'OTP email sent successfully');
     return true;
   } catch (error) {
-    logger.error({ err: error, to }, 'Failed to send OTP email');
-    return false;
+    const errCode = (error as any).code;
+    logger.warn({ err: error, to, code: errCode }, 'First OTP email attempt failed — retrying once');
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const info = await transporter.sendMail(mailOptions);
+      logger.info({ to, messageId: info.messageId }, 'OTP email sent successfully on retry');
+      return true;
+    } catch (retryError) {
+      logger.error({ err: retryError, to }, 'Failed to send OTP email after retry');
+      return false;
+    }
   }
 };
 
@@ -156,6 +176,7 @@ export interface CredentialsEmailData {
 /**
  * Send child login credentials email to parent after successful registration.
  * Contains child's handle and PIN — sensitive, one-time email.
+ * Includes retry logic on connection failure.
  */
 export const sendCredentialsEmail = async (
   to: string,
@@ -231,20 +252,31 @@ export const sendCredentialsEmail = async (
 </body>
 </html>`;
 
-  try {
-    const info = await transporter.sendMail({
-      from: `"koshiv Accounts" <${process.env.EMAIL_FROM}>`,
-      to,
-      subject: `Welcome to koshiv - Child Login Credentials for ${data.child_name}`,
-      text: `Hello ${data.parent_name},\n\nYour child ${data.child_name}'s login credentials:\n\nHandle: ${data.child_handle}\nPIN: ${data.child_pin}\n\nYour Parent Handle: ${data.parent_handle}\n\nPlease save these credentials safely.`,
-      html,
-    });
+  const mailOptions = {
+    from: `"koshiv Accounts" <${process.env.EMAIL_FROM}>`,
+    to,
+    subject: `Welcome to koshiv - Child Login Credentials for ${data.child_name}`,
+    text: `Hello ${data.parent_name},\n\nYour child ${data.child_name}'s login credentials:\n\nHandle: ${data.child_handle}\nPIN: ${data.child_pin}\n\nYour Parent Handle: ${data.parent_handle}\n\nPlease save these credentials safely.`,
+    html,
+  };
 
+  try {
+    const info = await transporter.sendMail(mailOptions);
     logger.info({ to, messageId: info.messageId }, 'Credentials email sent successfully');
     return true;
   } catch (error) {
-    logger.error({ err: error, to }, 'Failed to send credentials email');
-    return false;
+    const errCode = (error as any).code;
+    logger.warn({ err: error, to, code: errCode }, 'First credentials email attempt failed — retrying once');
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const info = await transporter.sendMail(mailOptions);
+      logger.info({ to, messageId: info.messageId }, 'Credentials email sent successfully on retry');
+      return true;
+    } catch (retryError) {
+      logger.error({ err: retryError, to }, 'Failed to send credentials email after retry');
+      return false;
+    }
   }
 };
 
