@@ -7,16 +7,18 @@
  * Module: auth_data
  * File: lib/features/auth/data/auth_repository.dart
  * Original File Version: 1.0.0
- * Current File Version: 1.1.0
+ * Current File Version: 1.2.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth Repository — registerInit and registerComplete API calls
  * Version 1.0.1 | Added detailed error logging for DioException to aid debugging
  * Version 1.0.2 | Fixed endpoint paths — Added /auth prefix per backend routing
  * Version 1.1.0 | Added forgotPassword method — POST /auth/forgot-password endpoint
+ * Version 1.2.0 | Added forgotPasswordVerifyOtp and forgotPasswordReset methods — Complete 3-step forgot password flow
  * 
  * Aim: Auth API Data Layer
  * Why: Abstracts HTTP communication for auth endpoints.
- *      Handles registration and password reset flows with proper error handling.
+ *      Handles registration and complete 3-step password reset flows
+ *      with proper error handling and response parsing.
  * ============================================================
  */
 
@@ -68,11 +70,13 @@ class AuthRepository {
     }
   }
 
-  Future<void> forgotPassword(String email) async {
+  // Step 1: Request OTP for forgot password
+  Future<void> forgotPassword(String email, String phone) async {
     try {
-      print('Forgot Password Request: email=$email');
+      print('Forgot Password Request: email=$email, phone=$phone');
       final response = await _dio.post('/auth/forgot-password', data: {
         'email': email,
+        'phone': phone,
       });
       print('Forgot Password Success: ${response.statusCode}');
       print('Forgot Password Response: ${response.data}');
@@ -86,6 +90,54 @@ class AuthRepository {
     } catch (e) {
       print('Unexpected Error: $e');
       throw Exception('An unexpected error occurred. Please try again.');
+    }
+  }
+
+  // Step 2: Verify OTP for forgot password
+  Future<Map<String, dynamic>> forgotPasswordVerifyOtp(String email, String otp) async {
+    try {
+      print('Forgot Password Verify OTP Request: email=$email, otp=$otp');
+      final response = await _dio.post('/auth/forgot-password/verify-otp', data: {
+        'email': email,
+        'otp': otp,
+      });
+      print('Forgot Password Verify OTP Success: ${response.statusCode}');
+      print('Forgot Password Verify OTP Response: ${response.data}');
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      print('DioException: ${e.type}');
+      print('DioException Status Code: ${e.response?.statusCode}');
+      print('DioException Response Data: ${e.response?.data}');
+      print('DioException Message: ${e.message}');
+      final message = e.response?.data?['error'] ?? 'OTP verification failed. Please try again.';
+      throw Exception(message);
+    } catch (e) {
+      print('Unexpected Error: $e');
+      throw Exception('An unexpected error occurred.');
+    }
+  }
+
+  // Step 3: Reset password with temp token
+  Future<void> forgotPasswordReset(String email, String tempToken, String newPassword) async {
+    try {
+      print('Forgot Password Reset Request: email=$email');
+      final response = await _dio.post('/auth/forgot-password/reset', data: {
+        'email': email,
+        'temp_token': tempToken,
+        'new_password': newPassword,
+      });
+      print('Forgot Password Reset Success: ${response.statusCode}');
+      print('Forgot Password Reset Response: ${response.data}');
+    } on DioException catch (e) {
+      print('DioException: ${e.type}');
+      print('DioException Status Code: ${e.response?.statusCode}');
+      print('DioException Response Data: ${e.response?.data}');
+      print('DioException Message: ${e.message}');
+      final message = e.response?.data?['error'] ?? 'Password reset failed. Please try again.';
+      throw Exception(message);
+    } catch (e) {
+      print('Unexpected Error: $e');
+      throw Exception('An unexpected error occurred.');
     }
   }
 }
