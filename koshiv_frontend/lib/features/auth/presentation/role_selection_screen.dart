@@ -7,7 +7,7 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/role_selection_screen.dart
  * Original File Version: 1.0.0
- * Current File Version: 2.4.1
+ * Current File Version: 2.4.2
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Role Selection Screen
  * Version 1.1.0 | Wired Login as Parent button
@@ -19,11 +19,13 @@
  * Version 2.3.0 | Figma Pro UI/UX Redesign — Premium Violet-Cyan gradient
  * Version 2.4.0 | Solid White Cards — Smart blend workaround for JPG white backgrounds
  * Version 2.4.1 | Fixed Android system back button — now returns to role cards instead of exiting app
+ * Version 2.4.2 | Wired Forgot Password link to navigate to ForgotPasswordScreen via AppRoutes
  * 
  * Aim: Unified Role Selection + Authentication Screen
  * Why: Delightful animated entry with typewriter text and subtle pulse guide.
  *      Premium Violet-Cyan gradient with solid white cards for clean avatar display.
  *      Android back button properly handled to navigate back to role selection.
+ *      Forgot Password link wired to dedicated screen for password reset flow.
  *      Dynamic responsive layout for all screen sizes.
  *      Maintains strict RBAC and COPPA data isolation.
  * ============================================================
@@ -36,7 +38,7 @@ import 'dart:ui';
 import '../../../core/routes/app_routes.dart';
 
 class RoleSelectionScreen extends StatefulWidget {
-  const RoleSelectionScreen({super.key});   
+  const RoleSelectionScreen({super.key});
 
   @override
   State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
@@ -170,45 +172,45 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
   double _responsiveFont(double size, BuildContext context) =>
       size * _scaleFactor(context);
 
-@override
-Widget build(BuildContext context) {
-  final scale = _scaleFactor(context);
+  @override
+  Widget build(BuildContext context) {
+    final scale = _scaleFactor(context);
 
-  return PopScope(
-    canPop: _selectedRole == null,
-    onPopInvokedWithResult: (didPop, result) {
-      if (!didPop && _selectedRole != null) {
-        _onBackToRoles();
-      }
-    },
-    child: Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Color(0xFFFDE47B),
-              Color(0xFFFF6B6B),
-              Color(0xFF87CEEB),
-              Color(0xFF4A8E9F),
-              Color(0xFF90EE90),
-              Color(0xFFFFFFFF),
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+    return PopScope(
+      canPop: _selectedRole == null,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _selectedRole != null) {
+          _onBackToRoles();
+        }
+      },
+      child: Scaffold(
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Color(0xFFFDE47B),
+                Color(0xFFFF6B6B),
+                Color(0xFF87CEEB),
+                Color(0xFF4A8E9F),
+                Color(0xFF90EE90),
+                Color(0xFFFFFFFF),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            ),
+          ),
+          child: SafeArea(
+            child: _selectedRole == null
+                ? _buildRoleSelectionView(context, scale)
+                : _buildLoginFormView(context, scale),
           ),
         ),
-        child: SafeArea(
-          child: _selectedRole == null
-              ? _buildRoleSelectionView(context, scale)
-              : _buildLoginFormView(context, scale),
-        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildRoleSelectionView(BuildContext context, double scale) {
     return SingleChildScrollView(
@@ -306,7 +308,7 @@ Widget build(BuildContext context) {
             IntrinsicHeight(
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch, 
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(
                     child: _buildExactRoleCard(
@@ -346,7 +348,7 @@ Widget build(BuildContext context) {
                   "Don't have an account? ",
                   style: TextStyle(
                     fontSize: _responsiveFont(15, context),
-                    color: Colors.white, 
+                    color: Colors.white,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -399,7 +401,7 @@ Widget build(BuildContext context) {
           borderRadius: BorderRadius.circular(24 * scale),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withAlpha((0.15 * 255).round()), 
+              color: Colors.black.withAlpha((0.15 * 255).round()),
               blurRadius: 25 * scale,
               offset: Offset(0, 10 * scale),
             ),
@@ -415,7 +417,9 @@ Widget build(BuildContext context) {
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) {
                   return Icon(
-                    role == 'student' ? Icons.child_care : Icons.family_restroom,
+                    role == 'student'
+                        ? Icons.child_care
+                        : Icons.family_restroom,
                     size: 60 * scale,
                     color: Colors.grey.shade400,
                   );
@@ -429,7 +433,7 @@ Widget build(BuildContext context) {
               style: TextStyle(
                 fontSize: _responsiveFont(15, context),
                 fontWeight: FontWeight.bold,
-                color: const Color(0xFF1E293B), 
+                color: const Color(0xFF1E293B),
                 height: 1.2,
               ),
             ),
@@ -439,12 +443,12 @@ Widget build(BuildContext context) {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: _responsiveFont(11.5, context),
-                color: const Color(0xFF475569), 
+                color: const Color(0xFF475569),
                 fontWeight: FontWeight.w500,
                 height: 1.3,
               ),
             ),
-            const Spacer(), 
+            const Spacer(),
             SizedBox(height: 16 * scale),
             Container(
               width: double.infinity,
@@ -457,8 +461,8 @@ Widget build(BuildContext context) {
                     color: btnColor.withAlpha((0.40 * 255).round()),
                     blurRadius: 10 * scale,
                     offset: Offset(0, 4 * scale),
-                  )
-                ]
+                  ),
+                ],
               ),
               child: Center(
                 child: Text(
@@ -554,7 +558,9 @@ Widget build(BuildContext context) {
                                 end: Alignment.bottomRight,
                               ),
                               border: Border.all(
-                                color: Colors.white.withAlpha((0.80 * 255).round()),
+                                color: Colors.white.withAlpha(
+                                  (0.80 * 255).round(),
+                                ),
                                 width: 2,
                               ),
                             ),
@@ -652,11 +658,17 @@ Widget build(BuildContext context) {
                             width: double.infinity,
                             height: 55 * scale,
                             decoration: BoxDecoration(
-                              color: isParent ? const Color(0xFFECA02B) : const Color(0xFF1E607A),
+                              color: isParent
+                                  ? const Color(0xFFECA02B)
+                                  : const Color(0xFF1E607A),
                               borderRadius: BorderRadius.circular(30 * scale),
                               boxShadow: [
                                 BoxShadow(
-                                  color: (isParent ? const Color(0xFFECA02B) : const Color(0xFF1E607A)).withAlpha((0.40 * 255).round()),
+                                  color:
+                                      (isParent
+                                              ? const Color(0xFFECA02B)
+                                              : const Color(0xFF1E607A))
+                                          .withAlpha((0.40 * 255).round()),
                                   blurRadius: 15 * scale,
                                   offset: Offset(0, 6 * scale),
                                 ),
@@ -689,7 +701,8 @@ Widget build(BuildContext context) {
 
                 SizedBox(height: 24 * scale),
                 GestureDetector(
-                  onTap: () => debugPrint('Navigating to Forgot Password...'),
+                  onTap: () =>
+                      Navigator.pushNamed(context, AppRoutes.forgotPassword),
                   child: Text(
                     'Forgot Password?',
                     style: TextStyle(
@@ -754,7 +767,7 @@ Widget build(BuildContext context) {
             ),
             suffixIcon: suffixIcon,
             filled: true,
-            fillColor: Colors.white.withAlpha((0.60 * 255).round()), 
+            fillColor: Colors.white.withAlpha((0.60 * 255).round()),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16 * scale),
               borderSide: BorderSide(
@@ -771,7 +784,10 @@ Widget build(BuildContext context) {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16 * scale),
-              borderSide: const BorderSide(color: Color(0xFF1E607A), width: 2.0),
+              borderSide: const BorderSide(
+                color: Color(0xFF1E607A),
+                width: 2.0,
+              ),
             ),
             contentPadding: EdgeInsets.symmetric(
               horizontal: 16 * scale,
@@ -876,7 +892,7 @@ class _PulseTextState extends State<_PulseText>
       child: Text(
         widget.text,
         style: TextStyle(
-          fontSize: widget.fontSize, 
+          fontSize: widget.fontSize,
           color: widget.color,
           fontWeight: FontWeight.w500,
           letterSpacing: 0.5,
