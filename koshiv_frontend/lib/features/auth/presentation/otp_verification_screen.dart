@@ -7,15 +7,18 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/otp_verification_screen.dart
  * Original File Version: 1.0.0
+ * Current File Version: 1.2.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial OTP Verification Screen — 6-digit box UI with resend timer
  * Version 1.1.0 | Integrated AuthRepository.registerComplete API call with loading state and error handling
  * Version 1.1.1 | Pass parentEmail to RegistrationSuccessScreen for email notification message
+ * Version 1.2.0 | Added OtpMode support — Handles both registration and forgot password flows, conditional API calls and navigation
  * 
- * Aim: OTP Verification UI (Step 2 of Parent Registration)
- * Why: To verify parent email via 6-digit OTP before completing registration.
- *      Calls POST /api/v1/auth/register/complete and navigates to success screen
- *      with child handle, PIN, and parent email on success.
+ * Aim: OTP Verification UI — Dual Mode (Registration + Forgot Password)
+ * Why: Reusable OTP screen with mode-based logic.
+ *      Registration mode calls registerComplete and navigates to success screen.
+ *      Forgot password mode calls forgotPasswordVerifyOtp and navigates to reset screen.
+ *      Clean separation without duplicating the OTP UI.
  * ============================================================
  */
 
@@ -23,11 +26,19 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import '../data/auth_repository.dart';
 import 'registration_success_screen.dart';
+import 'forgot_password_reset_screen.dart';
+
+enum OtpMode { registration, forgotPassword }
 
 class OtpVerificationScreen extends StatefulWidget {
   final String email;
+  final OtpMode mode;
 
-  const OtpVerificationScreen({super.key, required this.email});
+  const OtpVerificationScreen({
+    super.key,
+    required this.email,
+    this.mode = OtpMode.registration,
+  });
 
   @override
   State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
@@ -44,6 +55,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   bool _canResend = false;
   bool _isLoading = false;
 
+  bool get _isForgotPassword => widget.mode == OtpMode.forgotPassword;
+
   @override
   void initState() {
     super.initState();
@@ -57,13 +70,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_resendTimer <= 1) {
         timer.cancel();
-        setState(() {
-          _canResend = true;
-        });
+        setState(() => _canResend = true);
       } else {
-        setState(() {
-          _resendTimer--;
-        });
+        setState(() => _resendTimer--);
       }
     });
   }
@@ -102,28 +111,59 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     try {
-      final response = await _authRepository.registerComplete(widget.email, otp);
+      if (_isForgotPassword) {
+        // Forgot Password Flow: Verify OTP, get temp_token
+        final response = await _authRepository.forgotPasswordVerifyOtp(widget.email, otp);
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      final childHandle = response['child_handle'] as String;
-      final childPin = response['child_pin'] as String;
+        final tempToken = response['temp_token'] as String;
+        final user = response['user'] as Map<String, dynamic>;
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => RegistrationSuccessScreen(
-            childHandle: childHandle,
-            childPin: childPin,
-            parentEmail: widget.email,
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 400),
+            pageBuilder: (_, __, ___) => ForgotPasswordResetScreen(
+              email: widget.email,
+              tempToken: tempToken,
+              userData: user,
+            ),
+            transitionsBuilder: (_, animation, __, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(begin: const Offset(0.0, 0.08), end: Offset.zero)
+                      .animate(CurvedAnimation(parent: animation, curve: Curves.easeInOut)),
+                  child: child,
+                ),
+              );
+            },
           ),
-        ),
-      );
+        );
+      } else {
+        // Registration Flow: Complete registration
+        final response = await _authRepository.registerComplete(widget.email, otp);
+
+        if (!mounted) return;
+
+        final childHandle = response['child_handle'] as String;
+        final childPin = response['child_pin'] as String;
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => RegistrationSuccessScreen(
+              childHandle: childHandle,
+              childPin: childPin,
+              parentEmail: widget.email,
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -131,9 +171,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       );
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -151,61 +189,67 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final sw = MediaQuery.of(context).size.width;
+    final s = (sw / 375).clamp(0.85, 1.05);
+
+    final title = _isForgotPassword ? 'Verify OTP' : 'Verify Email';
+    final subtitle = _isForgotPassword
+        ? 'Enter the 6-digit code sent to\n${widget.email}'
+        : 'Enter the 6-digit code sent to\n${widget.email}';
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            Navigator.pop(context);
-          },
+          onPressed: () => Navigator.pop(context),
         ),
         elevation: 0,
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          padding: EdgeInsets.symmetric(horizontal: 32 * s),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
+              Icon(
                 Icons.email_outlined,
-                size: 64,
+                size: 64 * s,
                 color: Colors.deepPurple,
               ),
-              const SizedBox(height: 24),
-              const Text(
-                'Verify Email',
+              SizedBox(height: 24 * s),
+              Text(
+                title,
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: 28 * s,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: 12 * s),
               Text(
-                'Enter the 6-digit code sent to\n${widget.email}',
-                style: const TextStyle(
-                  fontSize: 16,
+                subtitle,
+                style: TextStyle(
+                  fontSize: 16 * s,
                   color: Colors.grey,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 40),
+              SizedBox(height: 40 * s),
 
               // OTP Input Boxes
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: List.generate(6, (index) {
                   return SizedBox(
-                    width: 48,
-                    height: 56,
+                    width: 48 * s,
+                    height: 56 * s,
                     child: TextField(
                       controller: _otpControllers[index],
                       focusNode: _focusNodes[index],
                       textAlign: TextAlign.center,
                       maxLength: 1,
                       keyboardType: TextInputType.number,
-                      style: const TextStyle(
-                        fontSize: 24,
+                      style: TextStyle(
+                        fontSize: 24 * s,
                         fontWeight: FontWeight.bold,
                       ),
                       decoration: const InputDecoration(
@@ -217,7 +261,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   );
                 }),
               ),
-              const SizedBox(height: 32),
+              SizedBox(height: 32 * s),
 
               // Resend Timer
               Row(
@@ -236,7 +280,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: 16 * s),
 
               // Resend Button
               TextButton(
@@ -248,24 +292,24 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 32),
+              SizedBox(height: 32 * s),
 
               // Verify Button
               SizedBox(
                 width: double.infinity,
-                height: 50,
+                height: 50 * s,
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _handleVerify,
                   child: _isLoading
-                      ? const SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: CircularProgressIndicator(
+                      ? SizedBox(
+                          height: 24 * s,
+                          width: 24 * s,
+                          child: const CircularProgressIndicator(
                             strokeWidth: 2,
                             color: Colors.white,
                           ),
                         )
-                      : const Text('Verify', style: TextStyle(fontSize: 16)),
+                      : Text('Verify', style: TextStyle(fontSize: 16 * s)),
                 ),
               ),
             ],
