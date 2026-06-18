@@ -19,12 +19,14 @@
  * Version 1.3.4 | UX FIX: On email failure, Redis pending key DELETED so user can retry immediately without lockout
  * Version 1.3.5 | VALIDATION FIX: Added email format regex validation BEFORE Redis store — invalid emails rejected with 400
  * Version 1.4.0 | FEAT: Added Forgot Password 3-step flow — initiate (email+phone→OTP), verify-otp (→temp_token+user), reset (temp_token→new password). Never reveals account existence.
+ * Version 1.4.1 | UX FIX: Added email_dispatched flag to forgot-password response — frontend can decide OTP screen vs stay on forgot screen
  * Version 1.4.2 | UX FIX: registerInit auto-deletes stale Redis pending key before new registration — user never sees "already in progress"
  *
  * Aim: Authentication HTTP Request/Response Handler
  * Why: Handles parent login, student login, 2-step registration, FIDO2,
  *      token refresh, and forgot password flow.
  *      registerInit auto-clears stale Redis keys for seamless retry.
+ *      forgotPassword returns email_dispatched flag for frontend UI control.
  *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
@@ -75,7 +77,7 @@ const getUserAgent = (req: Request): string => {
 };
 
 // ============================================================
-// FORGOT PASSWORD HANDLERS (v1.4.0 - NEW)
+// FORGOT PASSWORD HANDLERS (v1.4.0 - v1.4.1)
 // ============================================================
 
 /**
@@ -84,6 +86,8 @@ const getUserAgent = (req: Request): string => {
  *
  * Step 1 of 3: Verify email+phone, send OTP.
  * SECURITY: Always returns same message whether account exists or not.
+ * v1.4.1: Added email_dispatched flag in response for frontend flow control.
+ *         true = account found + OTP sent, false = no account.
  */
 export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
   const { email, phone } = req.body;
@@ -110,7 +114,10 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
         .catch((err) => logger.error({ err, email }, 'Forgot password email error'));
     }
 
-    res.status(200).json({ message: result.message });
+    res.status(200).json({
+      message: result.message,
+      email_dispatched: result.emailDispatched,
+    });
   } catch (error) {
     logger.error({ err: error }, 'Forgot password failed');
     res.status(500).json({ error: 'An unexpected error occurred' });
@@ -191,6 +198,10 @@ export const forgotPasswordReset = async (req: Request, res: Response): Promise<
 /**
  * POST /api/v1/auth/register/init
  * Body: { parent_name, email, password, phone_number?, child_name, child_dob?, child_grade? }
+ *
+ * Step 1 of 2: Redis-Hold Pattern.
+ * VALIDATION ORDER: required fields -> email format -> Redis auto-clean -> DB check -> Redis store -> send email.
+ * v1.4.2: Auto-deletes stale Redis pending key before new registration.
  */
 export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
@@ -210,6 +221,7 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
   }
 
   try {
+    // v1.4.2: Auto-clean stale Redis key if exists (user back/refresh scenario)
     const redisKey = `reg_pending:${email}`;
     const existing = await redis.exists(redisKey);
     if (existing) {
@@ -235,6 +247,7 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
         email_dispatched: true,
       });
     } else {
+      // Email failed — clean up Redis so user can retry immediately
       await redis.del(redisKey);
       logger.warn({ email, redisKey }, 'Email dispatch failed — Redis pending key deleted, user can retry');
       res.status(200).json({
@@ -251,6 +264,9 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
 /**
  * POST /api/v1/auth/register/complete
  * Body: { email: string, otp: string }
+ *
+ * Step 2 of 2: Redis-Hold Pattern.
+ * Validates OTP -> retrieves payload -> DB transaction -> credentials email -> response.
  */
 export const registerComplete = async (req: Request, res: Response): Promise<void> => {
   const { email, otp } = req.body;
@@ -279,6 +295,7 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
 
     logger.info({ email }, 'Registration completed successfully');
 
+    // Send credentials email non-blocking
     sendCredentialsEmail(email, {
       parent_name: payload.parent_name,
       parent_handle: result.parent_handle!,
@@ -314,6 +331,9 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
 
 /**
  * POST /api/v1/auth/parent/login
+ * Body: { email: string, password: string }
+ * Authenticates parent with email and password.
+ * Rate limited, account lockout after 5 failures.
  */
 export const parentLoginHandler = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
@@ -365,6 +385,9 @@ export const parentLoginHandler = async (req: Request, res: Response): Promise<v
 
 /**
  * POST /api/v1/auth/student/login
+ * Body: { handle: string, pin: string }
+ * Authenticates student with handle and PIN.
+ * Rate limited, account lockout after 5 failures.
  */
 export const childLogin = async (req: Request, res: Response): Promise<void> => {
   const { handle, pin } = req.body;
@@ -418,6 +441,11 @@ export const childLogin = async (req: Request, res: Response): Promise<void> => 
 // FIDO2 / WEBAUTHN HANDLERS
 // ============================================================
 
+/**
+ * POST /api/v1/auth/parent/register/options
+ * Body: { email: string }
+ * Returns WebAuthn registration options for the browser.
+ */
 export const getRegistrationOptions = async (req: Request, res: Response): Promise<void> => {
   const { email } = req.body;
 
@@ -438,6 +466,11 @@ export const getRegistrationOptions = async (req: Request, res: Response): Promi
   }
 };
 
+/**
+ * POST /api/v1/auth/parent/register/verify
+ * Body: { userId, response, challenge, device_label? }
+ * Verifies WebAuthn registration response, stores credential, returns JWT tokens.
+ */
 export const verifyRegistration = async (req: Request, res: Response): Promise<void> => {
   const { userId, response, challenge, device_label } = req.body;
 
@@ -475,6 +508,11 @@ export const verifyRegistration = async (req: Request, res: Response): Promise<v
 // TOKEN HANDLER
 // ============================================================
 
+/**
+ * POST /api/v1/auth/token/refresh
+ * Body: { refreshToken: string }
+ * Generates new access token from refresh token.
+ */
 export const refreshToken = async (req: Request, res: Response): Promise<void> => {
   const { refreshToken } = req.body;
 
