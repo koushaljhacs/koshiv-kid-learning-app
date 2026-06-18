@@ -9,14 +9,16 @@
  * Original File Version: 1.0.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Forgot Password service — OTP verification, temp token, password reset
+ * Version 1.0.1 | UX FIX: Added emailDispatched flag to initiateForgotPassword return — frontend can determine if OTP was actually sent
  *
  * Aim: Forgot Password Business Logic
  * Why: Handles password reset flow:
  *      1. Verify email+phone exist in DB
  *      2. Generate OTP, store in Redis (5-min TTL)
- *      3. Verify OTP, issue temp JWT (5-min TTL)
- *      4. Reset password using temp JWT
+ *      3. Verify OTP, issue temp token (5-min TTL)
+ *      4. Reset password using temp token
  *      Security: Never reveals if account exists (Step 1 returns same message)
+ *      emailDispatched flag helps frontend decide UI flow
  * ============================================================
  */
 
@@ -44,6 +46,7 @@ const FORGOT_OTP_TTL = 300;
 export interface ForgotPasswordResult {
   success: boolean;
   message: string;
+  emailDispatched: boolean;
   email?: string;
   rawOtp?: string;
   tempToken?: string;
@@ -59,12 +62,12 @@ export interface ForgotPasswordResult {
 /**
  * Step 1: Verify email+phone, generate OTP, store in Redis.
  * Returns same message whether account exists or not (security).
+ * emailDispatched: true if OTP generated and ready to send, false if no account.
  */
 export const initiateForgotPassword = async (
   email: string,
   phone: string,
 ): Promise<ForgotPasswordResult> => {
-  // Check if user exists with matching email AND phone
   const result = await pool.query(
     `SELECT u.user_id, u.user_handle, u.email, u.phone_number,
             p.full_name
@@ -74,22 +77,19 @@ export const initiateForgotPassword = async (
     [email, phone],
   );
 
-  // SECURITY: Always return same message
   if (result.rows.length === 0) {
     logger.info({ email, phone }, 'Forgot password — no matching account found');
     return {
       success: true,
       message: 'If the credentials match our records, an OTP will be sent to your email.',
+      emailDispatched: false,
     };
   }
 
   const user = result.rows[0];
-
-  // Generate OTP
   const rawOtp = crypto.randomInt(100000, 999999).toString();
   const hashedOtp = crypto.createHash('sha256').update(rawOtp).digest('hex');
 
-  // Store in Redis
   const key = `${FORGOT_OTP_PREFIX}${email}`;
   await redis.setex(key, FORGOT_OTP_TTL, JSON.stringify({
     userId: user.user_id,
@@ -108,14 +108,12 @@ export const initiateForgotPassword = async (
   return {
     success: true,
     message: 'If the credentials match our records, an OTP will be sent to your email.',
+    emailDispatched: true,
     email: user.email,
     rawOtp,
   };
 };
 
-/**
- * Step 2: Verify OTP, return temp token + user data.
- */
 export const verifyForgotPasswordOtp = async (
   email: string,
   otp: string,
@@ -124,23 +122,19 @@ export const verifyForgotPasswordOtp = async (
   const rawData = await redis.get(key);
 
   if (!rawData) {
-    return { success: false, message: 'Invalid or expired OTP.' };
+    return { success: false, message: 'Invalid or expired OTP.', emailDispatched: false };
   }
 
   const stored = JSON.parse(rawData);
   const inputHash = crypto.createHash('sha256').update(otp).digest('hex');
 
   if (inputHash !== stored.hashedOtp) {
-    return { success: false, message: 'Invalid OTP.' };
+    return { success: false, message: 'Invalid OTP.', emailDispatched: false };
   }
 
-  // Delete OTP from Redis
   await redis.del(key);
 
-  // Generate temp token (5 min TTL) — simple random token
   const tempToken = crypto.randomBytes(32).toString('hex');
-
-  // Store temp token in Redis
   const tempKey = `forgot_temp:${email}`;
   await redis.setex(tempKey, 300, JSON.stringify({
     userId: stored.userId,
@@ -152,14 +146,12 @@ export const verifyForgotPasswordOtp = async (
   return {
     success: true,
     message: 'OTP verified. Please set your new password.',
+    emailDispatched: true,
     tempToken,
     userData: stored.userData,
   };
 };
 
-/**
- * Step 3: Reset password using temp token.
- */
 export const resetPassword = async (
   email: string,
   tempToken: string,
@@ -169,14 +161,12 @@ export const resetPassword = async (
   const rawData = await redis.get(tempKey);
 
   if (!rawData) {
-    return { success: false, message: 'Session expired. Please start the forgot password process again.' };
+    return { success: false, message: 'Session expired. Please start the forgot password process again.', emailDispatched: false };
   }
 
-  // Token is valid — we don't compare it (stored in Redis key)
   const stored = JSON.parse(rawData);
   const passwordHash = await hashPassword(newPassword);
 
-  // Update password in DB
   await pool.query(
     `UPDATE auth_schema.users
      SET password_hash = $1, updated_at = NOW()
@@ -184,7 +174,6 @@ export const resetPassword = async (
     [passwordHash, stored.userId],
   );
 
-  // Clean up Redis
   await redis.del(tempKey);
 
   logger.info({ email, userId: stored.userId }, 'Password reset successful');
@@ -192,5 +181,6 @@ export const resetPassword = async (
   return {
     success: true,
     message: 'Password reset successful. Please login with your new password.',
+    emailDispatched: true,
   };
 };

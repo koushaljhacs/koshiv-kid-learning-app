@@ -19,11 +19,12 @@
  * Version 1.3.4 | UX FIX: On email failure, Redis pending key DELETED so user can retry immediately without lockout
  * Version 1.3.5 | VALIDATION FIX: Added email format regex validation BEFORE Redis store — invalid emails rejected with 400
  * Version 1.4.0 | FEAT: Added Forgot Password 3-step flow — initiate (email+phone→OTP), verify-otp (→temp_token+user), reset (temp_token→new password). Never reveals account existence.
+ * Version 1.4.2 | UX FIX: registerInit auto-deletes stale Redis pending key before new registration — user never sees "already in progress"
  *
  * Aim: Authentication HTTP Request/Response Handler
  * Why: Handles parent login, student login, 2-step registration, FIDO2,
  *      token refresh, and forgot password flow.
- *      Forgot password: never reveals if account exists (security).
+ *      registerInit auto-clears stale Redis keys for seamless retry.
  *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
@@ -209,6 +210,13 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
   }
 
   try {
+    const redisKey = `reg_pending:${email}`;
+    const existing = await redis.exists(redisKey);
+    if (existing) {
+      await redis.del(redisKey);
+      logger.info({ email }, 'Stale Redis pending key auto-deleted before new registration');
+    }
+
     const result = await initiateRegistration({
       parent_name, email, password, phone_number, child_name, child_dob, child_grade,
     });
@@ -227,7 +235,6 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
         email_dispatched: true,
       });
     } else {
-      const redisKey = `reg_pending:${email}`;
       await redis.del(redisKey);
       logger.warn({ email, redisKey }, 'Email dispatch failed — Redis pending key deleted, user can retry');
       res.status(200).json({
