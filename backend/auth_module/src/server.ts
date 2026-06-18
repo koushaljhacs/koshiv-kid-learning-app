@@ -11,18 +11,20 @@
  * Version 1.0.0 | Initial Express server — port 34554, DB + Redis health check, Pino logger
  * Version 1.1.0 | Integrated auth routes, added middleware debugging, startup logging, request logging
  * Version 1.2.0 | Bound server to 0.0.0.0 for Tailscale network access, added SMTP env vars debug logging
+ * Version 1.3.0 | DEBUG ENHANCEMENT: Added correlation ID (X-Correlation-ID), detailed request/response logging with credential masking, response time tracking
  *
  * Aim: Auth Module Express Server Entry Point
- * Why: Initializes Express app on port 34554 bound to all interfaces (0.0.0.0)
- *      for Tailscale network access. Verifies PostgreSQL and Redis connectivity.
- *      Integrates auth routes at /api/v1/auth/.
- *      Logs every incoming request with method, URL, IP.
- *      Handles 404 routes and global errors with Pino structured logging.
+ * Why: Initializes Express app on port 34554 bound to all interfaces (0.0.0.0).
+ *      Correlation ID assigned to every request for full traceability.
+ *      Request body logged with password/PIN/OTP fields masked.
+ *      Response time tracked for performance monitoring.
+ *      Verifies PostgreSQL and Redis connectivity at startup.
  *      Fails fast (process.exit(1)) if any infrastructure connection fails.
  * ============================================================
  */
 
 import express, { Application, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import pino from 'pino';
 import { connectDb } from './config/db';
@@ -46,6 +48,43 @@ const logger = pino({
 const app: Application = express();
 const PORT = parseInt(process.env.APP_PORT || '34554', 10);
 
+// Extend Express Request to include correlationId and startTime
+declare global {
+  namespace Express {
+    interface Request {
+      correlationId?: string;
+      startTime?: number;
+    }
+  }
+}
+
+/**
+ * Mask sensitive fields in request body for logging.
+ * Fields masked: password, pin, otp, pass, secret, token, refreshToken
+ */
+const maskSensitiveBody = (body: Record<string, unknown>): Record<string, unknown> => {
+  if (!body || typeof body !== 'object') return body;
+
+  const sensitiveFields = ['password', 'pin', 'otp', 'pass', 'secret', 'token', 'refreshtoken'];
+  const masked = { ...body };
+
+  for (const key of Object.keys(masked)) {
+    if (sensitiveFields.includes(key.toLowerCase())) {
+      masked[key] = '***MASKED***';
+    }
+    // Mask email partially: k***@gmail.com
+    if (key === 'email' && typeof masked[key] === 'string') {
+      const email = masked[key] as string;
+      const atIndex = email.indexOf('@');
+      if (atIndex > 1) {
+        masked[key] = email.charAt(0) + '***' + email.slice(atIndex);
+      }
+    }
+  }
+
+  return masked;
+};
+
 // ============================================================
 // GLOBAL MIDDLEWARES
 // ============================================================
@@ -54,17 +93,53 @@ const PORT = parseInt(process.env.APP_PORT || '34554', 10);
 app.use(express.json());
 logger.debug('JSON body parser middleware enabled');
 
-// Request logging — every incoming request
-app.use((req: Request, _res: Response, next: NextFunction) => {
+// Correlation ID + Request Logging Middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Generate unique correlation ID
+  const correlationId = req.headers['x-correlation-id'] as string ||
+    crypto.randomBytes(8).toString('hex');
+  req.correlationId = correlationId;
+  req.startTime = Date.now();
+
+  // Set correlation ID in response header
+  res.setHeader('X-Correlation-ID', correlationId);
+
+  // Log incoming request
+  const maskedBody = req.body && Object.keys(req.body).length > 0
+    ? maskSensitiveBody(req.body)
+    : undefined;
+
   logger.info(
     {
+      corrId: correlationId,
       method: req.method,
       url: req.originalUrl,
       ip: req.ip,
       userAgent: req.get('User-Agent') || 'unknown',
+      contentType: req.get('Content-Type') || 'unknown',
+      authorization: req.get('Authorization') ? 'Bearer ***' : undefined,
+      body: maskedBody,
     },
-    `Incoming request: ${req.method} ${req.originalUrl}`,
+    `REQ | ${correlationId} | ${req.method} ${req.originalUrl}`,
   );
+
+  // Capture response finish
+  res.on('finish', () => {
+    const responseTime = Date.now() - (req.startTime || Date.now());
+    const logLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+
+    logger[logLevel](
+      {
+        corrId: correlationId,
+        method: req.method,
+        url: req.originalUrl,
+        statusCode: res.statusCode,
+        responseTime: `${responseTime}ms`,
+      },
+      `RES | ${correlationId} | ${res.statusCode} ${res.statusMessage || ''} | ${responseTime}ms`,
+    );
+  });
+
   next();
 });
 
@@ -74,7 +149,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 
 // Health check endpoint
 app.get('/health', async (_req: Request, res: Response): Promise<void> => {
-  logger.debug('Health check requested');
+  logger.debug({ corrId: _req.correlationId }, 'Health check requested');
 
   const dbOk = await connectDb();
   const redisOk = await connectRedis();
@@ -90,10 +165,10 @@ app.get('/health', async (_req: Request, res: Response): Promise<void> => {
   };
 
   if (dbOk && redisOk) {
-    logger.info(healthData, 'Health check passed');
+    logger.info({ corrId: _req.correlationId, ...healthData }, 'Health check passed');
     res.status(200).json(healthData);
   } else {
-    logger.warn(healthData, 'Health check degraded');
+    logger.warn({ corrId: _req.correlationId, ...healthData }, 'Health check degraded');
     res.status(503).json(healthData);
   }
 });
@@ -110,16 +185,18 @@ logger.debug('Auth routes mounted at /api/v1/auth');
 app.use((req: Request, res: Response) => {
   logger.warn(
     {
+      corrId: req.correlationId,
       method: req.method,
       url: req.originalUrl,
       ip: req.ip,
     },
-    `Route not found: ${req.method} ${req.originalUrl}`,
+    `ROUTE NOT FOUND | ${req.correlationId} | ${req.method} ${req.originalUrl}`,
   );
   res.status(404).json({
     error: 'Route not found',
     path: req.originalUrl,
     method: req.method,
+    correlationId: req.correlationId,
   });
 });
 
@@ -127,20 +204,21 @@ app.use((req: Request, res: Response) => {
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   logger.error(
     {
+      corrId: req.correlationId,
       err: {
         message: err.message,
-        stack: err.stack,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
         name: err.name,
       },
       method: req.method,
       url: req.originalUrl,
-      body: req.body,
     },
-    `Unhandled error: ${err.message}`,
+    `ERROR | ${req.correlationId} | ${err.message}`,
   );
   res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong',
+    correlationId: req.correlationId,
   });
 });
 
@@ -185,7 +263,7 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
       port: process.env.DB_PORT,
       database: process.env.DB_NAME,
       user: process.env.DB_USER,
-    }, 'PostgreSQL connection FAILED — check DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME in .env file at backend/auth_module/.env');
+    }, 'PostgreSQL connection FAILED');
   }
 
   logger.debug('Step 3/4: Verifying Redis connection...');
@@ -197,7 +275,7 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
     logger.fatal({
       host: process.env.REDIS_HOST,
       port: process.env.REDIS_PORT,
-    }, 'Redis connection FAILED — check REDIS_HOST, REDIS_PORT, REDIS_PASSWORD in .env file at backend/auth_module/.env');
+    }, 'Redis connection FAILED');
   }
 
   logger.debug('Step 4/4: Checking loaded routes...');
@@ -205,11 +283,14 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
     {
       routes: [
         'GET  /health',
+        'POST /api/v1/auth/register/init',
+        'POST /api/v1/auth/register/complete',
+        'POST /api/v1/auth/parent/login',
+        'POST /api/v1/auth/student/login',
         'POST /api/v1/auth/otp/send',
         'POST /api/v1/auth/otp/verify',
         'POST /api/v1/auth/parent/register/options',
         'POST /api/v1/auth/parent/register/verify',
-        'POST /api/v1/auth/child/login',
         'POST /api/v1/auth/token/refresh',
       ],
     },
@@ -230,16 +311,14 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
       logger.fatal('[ACTION REQUIRED] PostgreSQL connection failed. Check:');
       logger.fatal('  1. Is PostgreSQL Docker container running?');
       logger.fatal('  2. Is Tailscale connected?');
-      logger.fatal('  3. Are DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME correct in .env?');
-      logger.fatal(`     Current: DB_HOST=${process.env.DB_HOST}, DB_PORT=${process.env.DB_PORT}`);
+      logger.fatal('  3. Are DB credentials correct in .env?');
     }
 
     if (!redisOk) {
       logger.fatal('[ACTION REQUIRED] Redis connection failed. Check:');
       logger.fatal('  1. Is Redis Docker container running?');
       logger.fatal('  2. Is Tailscale connected?');
-      logger.fatal('  3. Are REDIS_HOST, REDIS_PORT, REDIS_PASSWORD correct in .env?');
-      logger.fatal(`     Current: REDIS_HOST=${process.env.REDIS_HOST}, REDIS_PORT=${process.env.REDIS_PORT}`);
+      logger.fatal('  3. Are Redis credentials correct in .env?');
     }
 
     logger.fatal('Server will now exit. Fix the issues and restart.');
