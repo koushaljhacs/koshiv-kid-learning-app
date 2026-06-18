@@ -14,12 +14,14 @@
  * Version 1.2.1 | Fix: Updated FIDO2 import to verifyAndStoreCredential, removed deprecated verifyFido2RegistrationResponse
  * Version 1.3.0 | ARCH-01 Fix: Split registration into registerInit (Redis-Hold + OTP email) and registerComplete (OTP verify + DB transaction)
  * Version 1.3.1 | FEAT: Added credentials email dispatch after successful registration
- * Version 1.3.2 | PERF FIX: registerInit responds immediately after Redis store, sends email asynchronously to prevent mobile timeout
- * Version 1.3.3 | UX FIX: registerInit sends email synchronously with email_dispatched flag
- * Version 1.3.4 | UX FIX: On email failure, Redis pending key is DELETED so user can immediately retry without "already in progress" error
+ * Version 1.3.2 | PERF FIX: registerInit responds immediately after Redis store, sends email asynchronously
+ * Version 1.3.3 | UX FIX: registerInit sends email synchronously with email_dispatched flag in response
+ * Version 1.3.4 | UX FIX: On email failure, Redis pending key DELETED so user can retry immediately without lockout
+ * Version 1.3.5 | VALIDATION FIX: Added email format regex validation BEFORE Redis store — invalid emails (e.g. "koushal2203") rejected with 400, zero Redis/SMTP waste
  *
  * Aim: Authentication HTTP Request/Response Handler
  * Why: Handles parent login, student login, 2-step parent+child registration.
+ *      Validates email format BEFORE any Redis or SMTP operation.
  *      registerInit sends email synchronously, returns email_dispatched flag.
  *      On email failure, cleans up Redis so user can retry immediately.
  *      Delegates business logic to services. Never exposes internal errors.
@@ -50,6 +52,20 @@ const logger = pino({
 });
 
 /**
+ * RFC 5322 compliant email regex.
+ * Validates standard email format before any processing.
+ */
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+/**
+ * Validate email format.
+ * Returns true if valid, false otherwise.
+ */
+const isValidEmail = (email: string): boolean => {
+  return EMAIL_REGEX.test(email);
+};
+
+/**
  * Get client IP from request headers or connection.
  */
 const getClientIp = (req: Request): string => {
@@ -70,16 +86,19 @@ const getUserAgent = (req: Request): string => {
  * Body: { parent_name, email, password, phone_number?, child_name, child_dob?, child_grade? }
  *
  * Step 1 of 2: Redis-Hold Pattern.
- * 1. Validate payload
- * 2. Check DB + Redis (initiateRegistration)
- * 3. Store payload+hashedOTP in Redis
- * 4. Send OTP email SYNCHRONOUSLY
- * 5. If email SUCCESS → respond email_dispatched:true
- * 6. If email FAIL → DELETE Redis key → respond email_dispatched:false (user can retry immediately)
+ * VALIDATION ORDER:
+ *   1. Required fields check
+ *   2. EMAIL FORMAT validation (NEW v1.3.5) — reject BEFORE Redis/SMTP
+ *   3. Check DB + Redis (initiateRegistration)
+ *   4. Store payload+hashedOTP in Redis
+ *   5. Send OTP email synchronously
+ *   6. If email SUCCESS → respond email_dispatched:true
+ *   7. If email FAIL → DELETE Redis key → respond email_dispatched:false
  */
 export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
 
+  // Step 1: Required fields
   if (!parent_name || !email || !password || !child_name) {
     logger.warn('Registration init request missing required fields');
     res.status(400).json({
@@ -88,7 +107,17 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
     return;
   }
 
+  // Step 2: Email format validation (NEW — before Redis/SMTP)
+  if (!isValidEmail(email)) {
+    logger.warn({ email }, 'Registration init rejected — invalid email format');
+    res.status(400).json({
+      error: 'Invalid email format',
+    });
+    return;
+  }
+
   try {
+    // Step 3: Check DB + Redis
     const result = await initiateRegistration({
       parent_name,
       email,
@@ -104,7 +133,7 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Send email synchronously
+    // Step 4: Send email synchronously
     const emailSent = await sendOtpEmail(email, result.rawOtp);
 
     if (emailSent) {
@@ -114,7 +143,7 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
         email_dispatched: true,
       });
     } else {
-      // Email failed — clean up Redis so user can retry immediately
+      // Step 5: Email failed — clean up Redis so user can retry immediately
       const redisKey = `reg_pending:${email}`;
       await redis.del(redisKey);
       logger.warn({ email, redisKey }, 'Email dispatch failed — Redis pending key deleted, user can retry');
