@@ -15,19 +15,20 @@
  * Version 1.3.0 | ARCH-01 Fix: Split registration into registerInit (Redis-Hold + OTP email) and registerComplete (OTP verify + DB transaction)
  * Version 1.3.1 | FEAT: Added credentials email dispatch after successful registration
  * Version 1.3.2 | PERF FIX: registerInit responds immediately after Redis store, sends email asynchronously to prevent mobile timeout
- * Version 1.3.3 | UX FIX: registerInit now sends email synchronously WITH email_dispatched flag in response. Frontend shows SnackBar on failure, OTP screen only on success.
+ * Version 1.3.3 | UX FIX: registerInit sends email synchronously with email_dispatched flag
+ * Version 1.3.4 | UX FIX: On email failure, Redis pending key is DELETED so user can immediately retry without "already in progress" error
  *
  * Aim: Authentication HTTP Request/Response Handler
- * Why: Handles parent login, student login, 2-step parent+child registration
- *      (Redis-Hold pattern), FIDO2/WebAuthn, and token refresh.
- *      registerInit sends email SYNCHRONOUSLY and returns email_dispatched flag.
- *      Frontend uses this flag to decide OTP screen vs error SnackBar.
+ * Why: Handles parent login, student login, 2-step parent+child registration.
+ *      registerInit sends email synchronously, returns email_dispatched flag.
+ *      On email failure, cleans up Redis so user can retry immediately.
  *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
 
 import { Request, Response } from 'express';
 import pino from 'pino';
+import redis from '../config/redis';
 import { generateTokenPair, TokenPayload } from '../services/jwt.service';
 import { parentLogin, studentLogin } from '../services/auth.service';
 import { registerParentWithChild } from '../services/registration.service';
@@ -73,12 +74,8 @@ const getUserAgent = (req: Request): string => {
  * 2. Check DB + Redis (initiateRegistration)
  * 3. Store payload+hashedOTP in Redis
  * 4. Send OTP email SYNCHRONOUSLY
- * 5. Respond with email_dispatched flag
- *
- * Response:
- *   200 OK + email_dispatched:true  → Frontend opens OTP screen
- *   200 OK + email_dispatched:false → Frontend shows SnackBar error
- *   4xx/5xx                          → Frontend shows error via DioException
+ * 5. If email SUCCESS → respond email_dispatched:true
+ * 6. If email FAIL → DELETE Redis key → respond email_dispatched:false (user can retry immediately)
  */
 export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
@@ -107,7 +104,7 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Send email synchronously — frontend needs to know if email actually dispatched
+    // Send email synchronously
     const emailSent = await sendOtpEmail(email, result.rawOtp);
 
     if (emailSent) {
@@ -117,7 +114,11 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
         email_dispatched: true,
       });
     } else {
-      logger.error({ email }, 'Registration OTP email dispatch failed — SMTP error');
+      // Email failed — clean up Redis so user can retry immediately
+      const redisKey = `reg_pending:${email}`;
+      await redis.del(redisKey);
+      logger.warn({ email, redisKey }, 'Email dispatch failed — Redis pending key deleted, user can retry');
+
       res.status(200).json({
         message: 'Failed to send OTP. Please try again.',
         email_dispatched: false,
@@ -166,7 +167,6 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
 
     logger.info({ email }, 'Registration completed successfully');
 
-    // Send credentials email (non-blocking — response already prepared)
     sendCredentialsEmail(email, {
       parent_name: payload.parent_name,
       parent_handle: result.parent_handle!,
