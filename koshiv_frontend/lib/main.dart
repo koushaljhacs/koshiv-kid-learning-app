@@ -7,6 +7,7 @@
  * Module: core_initialization
  * File: lib/main.dart
  * Original File Version: 1.0.0
+ * Current File Version: 1.4.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Main Entry Point — Environment initialization before runApp, placeholder home screen
  * Version 1.1.0 | Updated home to RoleSelectionScreen — App now boots directly into role selection flow
@@ -15,11 +16,12 @@
  * Version 1.2.1 | Registered StudentLoginScreen route — Added to routes map
  * Version 1.2.2 | Registered ParentRegistrationScreen route — Added to routes map
  * Version 1.3.0 | Cleaned routes — Removed separate parent/student login routes, now handled within redesigned RoleSelectionScreen
+ * Version 1.4.0 | Registered ForgotPasswordScreen route — Added to routes map
  * 
  * Aim: Application Entry Point with Secure Boot and Named Routing
  * Why: To ensure ApiConfig loads environment variables before any widget renders,
  *      and to provide centralized named routing for type-safe navigation
- *      across the complete authentication flow.
+ *      across the complete authentication flow including forgot password.
  * ============================================================
  */
 
@@ -28,6 +30,7 @@ import 'core/config/api_config.dart';
 import 'core/routes/app_routes.dart';
 import 'features/auth/presentation/role_selection_screen.dart';
 import 'features/auth/presentation/parent_registration_screen.dart';
+import 'features/auth/presentation/forgot_password_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +49,7 @@ class KoshivApp extends StatelessWidget {
       routes: {
         AppRoutes.roleSelection: (context) => const RoleSelectionScreen(),
         AppRoutes.parentRegister: (context) => const ParentRegistrationScreen(),
+        AppRoutes.forgotPassword: (context) => const ForgotPasswordScreen(),
       },
     );
   }
