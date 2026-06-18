@@ -7,19 +7,20 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/parent_registration_screen.dart
  * Original File Version: 1.0.0
- * Current File Version: 1.3.0
+ * Current File Version: 1.4.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Parent Registration UI — Form fields for user data collection
  * Version 1.1.0 | Updated form fields per backend API spec — Added child_name (required), child_dob, child_grade (optional), restructured layout into Parent Details and Child Details sections
  * Version 1.1.1 | Added navigation to OtpVerificationScreen on successful validation
  * Version 1.2.0 | Integrated AuthRepository.registerInit API call with loading state and error handling
- * Version 1.3.0 | Added real-time email format validation on focus loss — validates when user exits email field, not on screen open
+ * Version 1.3.0 | Added real-time email format validation on focus loss
+ * Version 1.4.0 | Added inline email error display — red border + dynamic text for format errors and "Email already registered" API errors, no SnackBar for email
  * 
  * Aim: Secure Parent Registration UI (Step 1) — Aligned with POST /api/v1/auth/register/init
- * Why: Collects parent_name, email, password (required), phone_number (optional)
- *      plus child_name (required), child_dob, child_grade (optional).
- *      Real-time email validation on focus loss prevents invalid emails
- *      before API call. Uses email_dispatched flag for OTP screen navigation.
+ * Why: Real-time email validation on focus loss + API error displayed inline.
+ *      Invalid format shows "Please enter a valid email address".
+ *      409 conflict shows "Email already registered" directly on the field.
+ *      Clean UX — no disruptive SnackBar for email-specific errors.
  * ============================================================
  */
 
@@ -49,7 +50,8 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
   bool _obscurePassword = true;
   bool _isLoading = false;
-  String? _emailError;
+  String? _emailFormatError;
+  String? _emailApiError;
 
   @override
   void initState() {
@@ -59,21 +61,25 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
   void _onEmailFocusChange() {
     if (!_emailFocusNode.hasFocus) {
-      _validateEmail();
+      _validateEmailFormat();
+      // Clear API error when user edits email
+      if (_emailApiError != null) {
+        setState(() => _emailApiError = null);
+      }
     }
   }
 
-  void _validateEmail() {
+  void _validateEmailFormat() {
     final email = _emailController.text.trim();
     if (email.isEmpty) {
-      setState(() => _emailError = null);
+      setState(() => _emailFormatError = null);
       return;
     }
     final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
     if (!emailRegex.hasMatch(email)) {
-      setState(() => _emailError = 'Please enter a valid email address');
+      setState(() => _emailFormatError = 'Please enter a valid email address');
     } else {
-      setState(() => _emailError = null);
+      setState(() => _emailFormatError = null);
     }
   }
 
@@ -100,6 +106,9 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     final childDob = _childDobController.text.trim();
     final childGrade = _childGradeController.text.trim();
 
+    // Clear previous API error
+    setState(() => _emailApiError = null);
+
     if (parentName.isEmpty || email.isEmpty || password.isEmpty || childName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill all required fields: Parent Name, Email, Password, and Child Name.')),
@@ -107,10 +116,7 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       return;
     }
 
-    if (_emailError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid email address.')),
-      );
+    if (_emailFormatError != null) {
       return;
     }
 
@@ -142,9 +148,16 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
-      );
+      final errorMsg = e.toString().replaceAll('Exception: ', '');
+      
+      if (errorMsg.toLowerCase().contains('already registered') || 
+          errorMsg.toLowerCase().contains('already in progress')) {
+        setState(() => _emailApiError = 'Email already registered');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg)),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -178,7 +191,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
               ),
               const SizedBox(height: 32),
 
-              // Parent Details Section
               const Text(
                 'Parent Details',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
@@ -203,7 +215,7 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                   labelText: 'Email Address',
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.email_outlined),
-                  errorText: _emailError,
+                  errorText: _emailFormatError ?? _emailApiError,
                 ),
               ),
               const SizedBox(height: 16),
@@ -238,7 +250,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
               ),
               const SizedBox(height: 32),
 
-              // Child Details Section
               const Text(
                 'Child Details',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
