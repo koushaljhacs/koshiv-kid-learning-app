@@ -17,13 +17,13 @@
  * Version 1.3.2 | PERF FIX: registerInit responds immediately after Redis store, sends email asynchronously
  * Version 1.3.3 | UX FIX: registerInit sends email synchronously with email_dispatched flag in response
  * Version 1.3.4 | UX FIX: On email failure, Redis pending key DELETED so user can retry immediately without lockout
- * Version 1.3.5 | VALIDATION FIX: Added email format regex validation BEFORE Redis store — invalid emails (e.g. "koushal2203") rejected with 400, zero Redis/SMTP waste
+ * Version 1.3.5 | VALIDATION FIX: Added email format regex validation BEFORE Redis store — invalid emails rejected with 400
+ * Version 1.4.0 | FEAT: Added Forgot Password 3-step flow — initiate (email+phone→OTP), verify-otp (→temp_token+user), reset (temp_token→new password). Never reveals account existence.
  *
  * Aim: Authentication HTTP Request/Response Handler
- * Why: Handles parent login, student login, 2-step parent+child registration.
- *      Validates email format BEFORE any Redis or SMTP operation.
- *      registerInit sends email synchronously, returns email_dispatched flag.
- *      On email failure, cleans up Redis so user can retry immediately.
+ * Why: Handles parent login, student login, 2-step registration, FIDO2,
+ *      token refresh, and forgot password flow.
+ *      Forgot password: never reveals if account exists (security).
  *      Delegates business logic to services. Never exposes internal errors.
  * ============================================================
  */
@@ -37,7 +37,13 @@ import { registerParentWithChild } from '../services/registration.service';
 import { initiateRegistration, completeRegistration } from '../services/redis-hold.service';
 import { sendOtpEmail } from '../config/mailer';
 import { sendCredentialsEmail } from '../config/mailer';
+import { sendForgotPasswordOtpEmail } from '../config/mailer';
 import { generateFido2RegistrationOptions, verifyAndStoreCredential } from '../services/fido2.service';
+import {
+  initiateForgotPassword,
+  verifyForgotPasswordOtp,
+  resetPassword,
+} from '../services/forgot-password.service';
 
 const logger = pino({
   transport: {
@@ -51,54 +57,143 @@ const logger = pino({
   level: process.env.LOG_LEVEL || 'debug',
 });
 
-/**
- * RFC 5322 compliant email regex.
- * Validates standard email format before any processing.
- */
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-/**
- * Validate email format.
- * Returns true if valid, false otherwise.
- */
 const isValidEmail = (email: string): boolean => {
   return EMAIL_REGEX.test(email);
 };
 
-/**
- * Get client IP from request headers or connection.
- */
 const getClientIp = (req: Request): string => {
   return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
          req.ip ||
          'unknown';
 };
 
-/**
- * Get user agent from request.
- */
 const getUserAgent = (req: Request): string => {
   return req.get('User-Agent') || 'unknown';
 };
 
+// ============================================================
+// FORGOT PASSWORD HANDLERS (v1.4.0 - NEW)
+// ============================================================
+
+/**
+ * POST /api/v1/auth/forgot-password
+ * Body: { email: string, phone: string }
+ *
+ * Step 1 of 3: Verify email+phone, send OTP.
+ * SECURITY: Always returns same message whether account exists or not.
+ */
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  const { email, phone } = req.body;
+
+  if (!email || !phone) {
+    res.status(400).json({ error: 'Email and phone number are required' });
+    return;
+  }
+
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'Invalid email format' });
+    return;
+  }
+
+  try {
+    const result = await initiateForgotPassword(email, phone);
+
+    if (result.email && result.rawOtp) {
+      sendForgotPasswordOtpEmail(result.email, result.rawOtp)
+        .then((sent) => {
+          if (sent) logger.info({ email }, 'Forgot password OTP email sent');
+          else logger.error({ email }, 'Failed to send forgot password OTP email');
+        })
+        .catch((err) => logger.error({ err, email }, 'Forgot password email error'));
+    }
+
+    res.status(200).json({ message: result.message });
+  } catch (error) {
+    logger.error({ err: error }, 'Forgot password failed');
+    res.status(500).json({ error: 'An unexpected error occurred' });
+  }
+};
+
+/**
+ * POST /api/v1/auth/forgot-password/verify-otp
+ * Body: { email: string, otp: string }
+ *
+ * Step 2 of 3: Verify OTP, return temp token + user data.
+ */
+export const forgotPasswordVerifyOtp = async (req: Request, res: Response): Promise<void> => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    res.status(400).json({ error: 'Email and OTP are required' });
+    return;
+  }
+
+  try {
+    const result = await verifyForgotPasswordOtp(email, otp);
+
+    if (!result.success) {
+      res.status(401).json({ error: result.message });
+      return;
+    }
+
+    res.status(200).json({
+      message: result.message,
+      temp_token: result.tempToken,
+      user: result.userData,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Forgot password OTP verify failed');
+    res.status(500).json({ error: 'An unexpected error occurred' });
+  }
+};
+
+/**
+ * POST /api/v1/auth/forgot-password/reset
+ * Body: { email: string, temp_token: string, new_password: string }
+ *
+ * Step 3 of 3: Reset password using temp token.
+ */
+export const forgotPasswordReset = async (req: Request, res: Response): Promise<void> => {
+  const { email, temp_token, new_password } = req.body;
+
+  if (!email || !temp_token || !new_password) {
+    res.status(400).json({ error: 'Email, temp_token, and new_password are required' });
+    return;
+  }
+
+  if (new_password.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters' });
+    return;
+  }
+
+  try {
+    const result = await resetPassword(email, temp_token, new_password);
+
+    if (!result.success) {
+      res.status(401).json({ error: result.message });
+      return;
+    }
+
+    res.status(200).json({ message: result.message });
+  } catch (error) {
+    logger.error({ err: error }, 'Password reset failed');
+    res.status(500).json({ error: 'An unexpected error occurred' });
+  }
+};
+
+// ============================================================
+// REGISTRATION HANDLERS
+// ============================================================
+
 /**
  * POST /api/v1/auth/register/init
  * Body: { parent_name, email, password, phone_number?, child_name, child_dob?, child_grade? }
- *
- * Step 1 of 2: Redis-Hold Pattern.
- * VALIDATION ORDER:
- *   1. Required fields check
- *   2. EMAIL FORMAT validation (NEW v1.3.5) — reject BEFORE Redis/SMTP
- *   3. Check DB + Redis (initiateRegistration)
- *   4. Store payload+hashedOTP in Redis
- *   5. Send OTP email synchronously
- *   6. If email SUCCESS → respond email_dispatched:true
- *   7. If email FAIL → DELETE Redis key → respond email_dispatched:false
  */
 export const registerInit = async (req: Request, res: Response): Promise<void> => {
   const { parent_name, email, password, phone_number, child_name, child_dob, child_grade } = req.body;
 
-  // Step 1: Required fields
   if (!parent_name || !email || !password || !child_name) {
     logger.warn('Registration init request missing required fields');
     res.status(400).json({
@@ -107,25 +202,15 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
     return;
   }
 
-  // Step 2: Email format validation (NEW — before Redis/SMTP)
   if (!isValidEmail(email)) {
     logger.warn({ email }, 'Registration init rejected — invalid email format');
-    res.status(400).json({
-      error: 'Invalid email format',
-    });
+    res.status(400).json({ error: 'Invalid email format' });
     return;
   }
 
   try {
-    // Step 3: Check DB + Redis
     const result = await initiateRegistration({
-      parent_name,
-      email,
-      password,
-      phone_number,
-      child_name,
-      child_dob,
-      child_grade,
+      parent_name, email, password, phone_number, child_name, child_dob, child_grade,
     });
 
     if ('error' in result) {
@@ -133,7 +218,6 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Step 4: Send email synchronously
     const emailSent = await sendOtpEmail(email, result.rawOtp);
 
     if (emailSent) {
@@ -143,11 +227,9 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
         email_dispatched: true,
       });
     } else {
-      // Step 5: Email failed — clean up Redis so user can retry immediately
       const redisKey = `reg_pending:${email}`;
       await redis.del(redisKey);
       logger.warn({ email, redisKey }, 'Email dispatch failed — Redis pending key deleted, user can retry');
-
       res.status(200).json({
         message: 'Failed to send OTP. Please try again.',
         email_dispatched: false,
@@ -162,12 +244,6 @@ export const registerInit = async (req: Request, res: Response): Promise<void> =
 /**
  * POST /api/v1/auth/register/complete
  * Body: { email: string, otp: string }
- *
- * Step 2 of 2: Redis-Hold Pattern.
- * Validates OTP against Redis → retrieves stored payload →
- * executes BEGIN...COMMIT transaction in PostgreSQL →
- * deletes Redis key → sends child credentials via email →
- * returns handles + child PIN.
  */
 export const registerComplete = async (req: Request, res: Response): Promise<void> => {
   const { email, otp } = req.body;
@@ -204,11 +280,8 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
       child_pin: result.child_pin!,
     })
       .then((sent) => {
-        if (sent) {
-          logger.info({ email }, 'Child credentials email dispatched');
-        } else {
-          logger.error({ email }, 'Failed to send credentials email');
-        }
+        if (sent) logger.info({ email }, 'Child credentials email dispatched');
+        else logger.error({ email }, 'Failed to send credentials email');
       })
       .catch((emailError) => {
         logger.error({ err: emailError, email }, 'Credentials email dispatch failed');
@@ -228,11 +301,12 @@ export const registerComplete = async (req: Request, res: Response): Promise<voi
   }
 };
 
+// ============================================================
+// LOGIN HANDLERS
+// ============================================================
+
 /**
  * POST /api/v1/auth/parent/login
- * Body: { email: string, password: string }
- * Authenticates parent with email and password.
- * Rate limited, account lockout after 5 failures.
  */
 export const parentLoginHandler = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
@@ -246,7 +320,6 @@ export const parentLoginHandler = async (req: Request, res: Response): Promise<v
   try {
     const ipAddress = getClientIp(req);
     const userAgent = getUserAgent(req);
-
     const result = await parentLogin(email, password, ipAddress, userAgent);
 
     if (!result.success) {
@@ -266,8 +339,8 @@ export const parentLoginHandler = async (req: Request, res: Response): Promise<v
     };
 
     const tokens = generateTokenPair(payload);
-
     logger.info({ userId: result.user.user_id }, 'Parent logged in successfully');
+
     res.status(200).json({
       message: 'Login successful',
       user: {
@@ -284,78 +357,7 @@ export const parentLoginHandler = async (req: Request, res: Response): Promise<v
 };
 
 /**
- * POST /api/v1/auth/parent/register/options
- * Body: { email: string }
- * Returns WebAuthn registration options for the browser.
- */
-export const getRegistrationOptions = async (req: Request, res: Response): Promise<void> => {
-  const { email } = req.body;
-
-  if (!email || typeof email !== 'string') {
-    logger.warn('Registration options request missing email');
-    res.status(400).json({ error: 'Email is required' });
-    return;
-  }
-
-  try {
-    const userId = `parent_${Date.now()}`;
-    const options = await generateFido2RegistrationOptions(userId, email);
-
-    logger.info({ email }, 'FIDO2 registration options generated');
-    res.status(200).json(options);
-  } catch (error) {
-    logger.error({ err: error }, 'Failed to generate registration options');
-    res.status(500).json({ error: 'Failed to generate registration options' });
-  }
-};
-
-/**
- * POST /api/v1/auth/parent/register/verify
- * Body: { userId: string, response: RegistrationResponseJSON, challenge: string, device_label?: string }
- * Verifies WebAuthn registration response, stores credential, returns JWT tokens.
- */
-export const verifyRegistration = async (req: Request, res: Response): Promise<void> => {
-  const { userId, response, challenge, device_label } = req.body;
-
-  if (!userId || !response || !challenge) {
-    logger.warn('Registration verify request missing fields');
-    res.status(400).json({ error: 'userId, response, and challenge are required' });
-    return;
-  }
-
-  try {
-    const verification = await verifyAndStoreCredential(userId, response, challenge, device_label);
-
-    if (!verification.verified) {
-      logger.warn({ userId }, 'FIDO2 registration verification failed');
-      res.status(401).json({ error: 'Registration verification failed' });
-      return;
-    }
-
-    const payload: TokenPayload = {
-      sub: userId,
-      role: 'parent',
-    };
-
-    const tokens = generateTokenPair(payload);
-
-    logger.info({ userId }, 'FIDO2 credential verified and stored');
-    res.status(201).json({
-      message: 'Biometric registration successful',
-      credential_id: verification.credential_id,
-      ...tokens,
-    });
-  } catch (error) {
-    logger.error({ err: error }, 'Failed to verify registration');
-    res.status(500).json({ error: 'Failed to verify registration' });
-  }
-};
-
-/**
  * POST /api/v1/auth/student/login
- * Body: { handle: string, pin: string }
- * Authenticates student with handle and PIN.
- * Rate limited, account lockout after 5 failures.
  */
 export const childLogin = async (req: Request, res: Response): Promise<void> => {
   const { handle, pin } = req.body;
@@ -369,7 +371,6 @@ export const childLogin = async (req: Request, res: Response): Promise<void> => 
   try {
     const ipAddress = getClientIp(req);
     const userAgent = getUserAgent(req);
-
     const result = await studentLogin(handle, pin, ipAddress, userAgent);
 
     if (!result.success) {
@@ -389,8 +390,8 @@ export const childLogin = async (req: Request, res: Response): Promise<void> => 
     };
 
     const tokens = generateTokenPair(payload);
-
     logger.info({ userId: result.user.user_id }, 'Student logged in successfully');
+
     res.status(200).json({
       message: 'Login successful',
       user: {
@@ -406,11 +407,67 @@ export const childLogin = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
-/**
- * POST /api/v1/auth/token/refresh
- * Body: { refreshToken: string }
- * Generates new access token from refresh token.
- */
+// ============================================================
+// FIDO2 / WEBAUTHN HANDLERS
+// ============================================================
+
+export const getRegistrationOptions = async (req: Request, res: Response): Promise<void> => {
+  const { email } = req.body;
+
+  if (!email || typeof email !== 'string') {
+    logger.warn('Registration options request missing email');
+    res.status(400).json({ error: 'Email is required' });
+    return;
+  }
+
+  try {
+    const userId = `parent_${Date.now()}`;
+    const options = await generateFido2RegistrationOptions(userId, email);
+    logger.info({ email }, 'FIDO2 registration options generated');
+    res.status(200).json(options);
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to generate registration options');
+    res.status(500).json({ error: 'Failed to generate registration options' });
+  }
+};
+
+export const verifyRegistration = async (req: Request, res: Response): Promise<void> => {
+  const { userId, response, challenge, device_label } = req.body;
+
+  if (!userId || !response || !challenge) {
+    logger.warn('Registration verify request missing fields');
+    res.status(400).json({ error: 'userId, response, and challenge are required' });
+    return;
+  }
+
+  try {
+    const verification = await verifyAndStoreCredential(userId, response, challenge, device_label);
+
+    if (!verification.verified) {
+      logger.warn({ userId }, 'FIDO2 registration verification failed');
+      res.status(401).json({ error: 'Registration verification failed' });
+      return;
+    }
+
+    const payload: TokenPayload = { sub: userId, role: 'parent' };
+    const tokens = generateTokenPair(payload);
+    logger.info({ userId }, 'FIDO2 credential verified and stored');
+
+    res.status(201).json({
+      message: 'Biometric registration successful',
+      credential_id: verification.credential_id,
+      ...tokens,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to verify registration');
+    res.status(500).json({ error: 'Failed to verify registration' });
+  }
+};
+
+// ============================================================
+// TOKEN HANDLER
+// ============================================================
+
 export const refreshToken = async (req: Request, res: Response): Promise<void> => {
   const { refreshToken } = req.body;
 
@@ -432,7 +489,6 @@ export const refreshToken = async (req: Request, res: Response): Promise<void> =
     };
 
     const tokens = generateTokenPair(payload);
-
     logger.info({ sub: decoded.sub }, 'Token refreshed successfully');
     res.status(200).json(tokens);
   } catch (error) {
