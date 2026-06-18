@@ -11,15 +11,15 @@
  * Version 1.0.0 | Initial Express server — port 34554, DB + Redis health check, Pino logger
  * Version 1.1.0 | Integrated auth routes, added middleware debugging, startup logging, request logging
  * Version 1.2.0 | Bound server to 0.0.0.0 for Tailscale network access, added SMTP env vars debug logging
- * Version 1.3.0 | DEBUG ENHANCEMENT: Added correlation ID (X-Correlation-ID), detailed request/response logging with credential masking, response time tracking
+ * Version 1.3.0 | ADVANCED MONITORING: Added correlation ID per request, request/response timing (ms), sensitive field masking (password/pin/token), complete error stack traces, auto-detect modified files on restart
  *
- * Aim: Auth Module Express Server Entry Point
+ * Aim: Auth Module Express Server Entry Point — ADVANCED DEBUG MODE
  * Why: Initializes Express app on port 34554 bound to all interfaces (0.0.0.0).
- *      Correlation ID assigned to every request for full traceability.
- *      Request body logged with password/PIN/OTP fields masked.
- *      Response time tracked for performance monitoring.
- *      Verifies PostgreSQL and Redis connectivity at startup.
- *      Fails fast (process.exit(1)) if any infrastructure connection fails.
+ *      Every request gets a unique correlation ID for tracing.
+ *      Logs REQUEST (masked body) and RESPONSE (status, timing, truncated body).
+ *      All credentials (password, pin, token) masked as "***REDACTED***".
+ *      Tracks response time in ms. Full error stack for 5xx.
+ *      Fails fast (process.exit(1)) if infrastructure connection fails.
  * ============================================================
  */
 
@@ -48,7 +48,27 @@ const logger = pino({
 const app: Application = express();
 const PORT = parseInt(process.env.APP_PORT || '34554', 10);
 
-// Extend Express Request to include correlationId and startTime
+// ============================================================
+// GLOBAL MIDDLEWARES
+// ============================================================
+
+// Parse JSON request body
+app.use(express.json());
+logger.debug('JSON body parser middleware enabled');
+
+// ============================================================
+// REQUEST LOGGING MIDDLEWARE (ADVANCED)
+// ============================================================
+
+/**
+ * Fields that should be masked in logs.
+ * Never log passwords, PINs, or tokens in plain text.
+ */
+const SENSITIVE_FIELDS = ['password', 'pin', 'otp', 'token', 'accessToken', 'refreshToken', 'authorization'];
+
+/**
+ * Extend Express Request to store correlation ID and start time.
+ */
 declare global {
   namespace Express {
     interface Request {
@@ -59,86 +79,107 @@ declare global {
 }
 
 /**
- * Mask sensitive fields in request body for logging.
- * Fields masked: password, pin, otp, pass, secret, token, refreshToken
+ * Mask sensitive fields in an object.
+ * Replaces values with "***REDACTED***" for any key matching SENSITIVE_FIELDS.
  */
-const maskSensitiveBody = (body: Record<string, unknown>): Record<string, unknown> => {
+const maskSensitiveData = (body: any): any => {
   if (!body || typeof body !== 'object') return body;
 
-  const sensitiveFields = ['password', 'pin', 'otp', 'pass', 'secret', 'token', 'refreshtoken'];
-  const masked = { ...body };
-
-  for (const key of Object.keys(masked)) {
-    if (sensitiveFields.includes(key.toLowerCase())) {
-      masked[key] = '***MASKED***';
-    }
-    // Mask email partially: k***@gmail.com
-    if (key === 'email' && typeof masked[key] === 'string') {
-      const email = masked[key] as string;
-      const atIndex = email.indexOf('@');
-      if (atIndex > 1) {
-        masked[key] = email.charAt(0) + '***' + email.slice(atIndex);
-      }
-    }
+  if (Array.isArray(body)) {
+    return body.map(maskSensitiveData);
   }
 
+  const masked: any = {};
+  for (const [key, value] of Object.entries(body)) {
+    const lowerKey = key.toLowerCase();
+    if (SENSITIVE_FIELDS.some((field) => lowerKey.includes(field))) {
+      masked[key] = '***REDACTED***';
+    } else if (typeof value === 'object' && value !== null) {
+      masked[key] = maskSensitiveData(value);
+    } else {
+      masked[key] = value;
+    }
+  }
   return masked;
 };
 
-// ============================================================
-// GLOBAL MIDDLEWARES
-// ============================================================
+/**
+ * Truncate string to maxLength for logging.
+ */
+const truncate = (str: string, maxLength: number = 300): string => {
+  if (!str || str.length <= maxLength) return str;
+  return str.substring(0, maxLength) + `... [TRUNCATED, total ${str.length} chars]`;
+};
 
-// Parse JSON request body
-app.use(express.json());
-logger.debug('JSON body parser middleware enabled');
-
-// Correlation ID + Request Logging Middleware
+/**
+ * Middleware: Log every incoming request with correlation ID.
+ * Attaches correlationId and startTime to request object.
+ */
 app.use((req: Request, res: Response, next: NextFunction) => {
   // Generate unique correlation ID
-  const correlationId = req.headers['x-correlation-id'] as string ||
-    crypto.randomBytes(8).toString('hex');
-  req.correlationId = correlationId;
+  req.correlationId = crypto.randomBytes(4).toString('hex');
   req.startTime = Date.now();
 
-  // Set correlation ID in response header
-  res.setHeader('X-Correlation-ID', correlationId);
-
-  // Log incoming request
   const maskedBody = req.body && Object.keys(req.body).length > 0
-    ? maskSensitiveBody(req.body)
+    ? maskSensitiveData(req.body)
     : undefined;
 
   logger.info(
     {
-      corrId: correlationId,
+      correlationId: req.correlationId,
       method: req.method,
       url: req.originalUrl,
       ip: req.ip,
       userAgent: req.get('User-Agent') || 'unknown',
       contentType: req.get('Content-Type') || 'unknown',
-      authorization: req.get('Authorization') ? 'Bearer ***' : undefined,
       body: maskedBody,
     },
-    `REQ | ${correlationId} | ${req.method} ${req.originalUrl}`,
+    `REQ | ${req.correlationId} | ${req.method} ${req.originalUrl}`,
   );
 
-  // Capture response finish
-  res.on('finish', () => {
-    const responseTime = Date.now() - (req.startTime || Date.now());
-    const logLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+  next();
+});
 
-    logger[logLevel](
-      {
-        corrId: correlationId,
-        method: req.method,
-        url: req.originalUrl,
-        statusCode: res.statusCode,
-        responseTime: `${responseTime}ms`,
-      },
-      `RES | ${correlationId} | ${res.statusCode} ${res.statusMessage || ''} | ${responseTime}ms`,
-    );
-  });
+// ============================================================
+// RESPONSE LOGGING MIDDLEWARE (ADVANCED)
+// ============================================================
+
+/**
+ * Middleware: Log response after it's sent.
+ * Captures status code, response time, and truncated response body.
+ */
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Store original json function
+  const originalJson = res.json.bind(res);
+
+  // Override json to capture response body
+  res.json = function (body: any) {
+    const responseTime = req.startTime ? Date.now() - req.startTime : 0;
+    const statusCode = res.statusCode;
+
+    // Mask sensitive data in response
+    const maskedBody = maskSensitiveData(body);
+    const bodyStr = typeof maskedBody === 'object'
+      ? JSON.stringify(maskedBody)
+      : String(maskedBody);
+
+    const logData = {
+      correlationId: req.correlationId,
+      statusCode,
+      responseTimeMs: responseTime,
+      body: truncate(bodyStr),
+    };
+
+    if (statusCode >= 500) {
+      logger.error(logData, `RES | ${req.correlationId} | ${statusCode} | ${responseTime}ms | ERROR`);
+    } else if (statusCode >= 400) {
+      logger.warn(logData, `RES | ${req.correlationId} | ${statusCode} | ${responseTime}ms | CLIENT ERROR`);
+    } else {
+      logger.info(logData, `RES | ${req.correlationId} | ${statusCode} | ${responseTime}ms`);
+    }
+
+    return originalJson(body);
+  };
 
   next();
 });
@@ -149,7 +190,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Health check endpoint
 app.get('/health', async (_req: Request, res: Response): Promise<void> => {
-  logger.debug({ corrId: _req.correlationId }, 'Health check requested');
+  logger.debug({ correlationId: _req.correlationId }, 'Health check requested');
 
   const dbOk = await connectDb();
   const redisOk = await connectRedis();
@@ -165,10 +206,10 @@ app.get('/health', async (_req: Request, res: Response): Promise<void> => {
   };
 
   if (dbOk && redisOk) {
-    logger.info({ corrId: _req.correlationId, ...healthData }, 'Health check passed');
+    logger.info({ correlationId: _req.correlationId, ...healthData }, 'Health check passed');
     res.status(200).json(healthData);
   } else {
-    logger.warn({ corrId: _req.correlationId, ...healthData }, 'Health check degraded');
+    logger.warn({ correlationId: _req.correlationId, ...healthData }, 'Health check degraded');
     res.status(503).json(healthData);
   }
 });
@@ -183,15 +224,19 @@ logger.debug('Auth routes mounted at /api/v1/auth');
 
 // 404 handler — catch unmatched routes
 app.use((req: Request, res: Response) => {
+  const responseTime = req.startTime ? Date.now() - req.startTime : 0;
+
   logger.warn(
     {
-      corrId: req.correlationId,
+      correlationId: req.correlationId,
       method: req.method,
       url: req.originalUrl,
       ip: req.ip,
+      responseTimeMs: responseTime,
     },
-    `ROUTE NOT FOUND | ${req.correlationId} | ${req.method} ${req.originalUrl}`,
+    `404 | ${req.correlationId} | Route not found: ${req.method} ${req.originalUrl}`,
   );
+
   res.status(404).json({
     error: 'Route not found',
     path: req.originalUrl,
@@ -202,19 +247,24 @@ app.use((req: Request, res: Response) => {
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  const responseTime = req.startTime ? Date.now() - req.startTime : 0;
+
   logger.error(
     {
-      corrId: req.correlationId,
-      err: {
-        message: err.message,
-        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+      correlationId: req.correlationId,
+      error: {
         name: err.name,
+        message: err.message,
+        stack: err.stack,
       },
       method: req.method,
       url: req.originalUrl,
+      maskedBody: req.body ? maskSensitiveData(req.body) : undefined,
+      responseTimeMs: responseTime,
     },
-    `ERROR | ${req.correlationId} | ${err.message}`,
+    `ERROR | ${req.correlationId} | 500 | ${err.message}`,
   );
+
   res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong',
@@ -248,6 +298,8 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
       SMTP_PASS: process.env.SMTP_PASS ? '***HIDDEN***' : 'NOT SET',
       APP_PORT: process.env.APP_PORT || 'NOT SET',
       RP_ID: process.env.RP_ID || 'NOT SET',
+      NODE_ENV: process.env.NODE_ENV || 'development',
+      LOG_LEVEL: process.env.LOG_LEVEL || 'debug',
     },
     'Environment variables loaded',
   );
@@ -286,11 +338,11 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
         'POST /api/v1/auth/register/init',
         'POST /api/v1/auth/register/complete',
         'POST /api/v1/auth/parent/login',
-        'POST /api/v1/auth/student/login',
         'POST /api/v1/auth/otp/send',
         'POST /api/v1/auth/otp/verify',
         'POST /api/v1/auth/parent/register/options',
         'POST /api/v1/auth/parent/register/verify',
+        'POST /api/v1/auth/student/login',
         'POST /api/v1/auth/token/refresh',
       ],
     },
@@ -300,7 +352,7 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
   if (dbOk && redisOk) {
     logger.info('============================================================');
     logger.info('Auth Service Database and Cache connected successfully');
-    logger.info({ port: PORT, bind: '0.0.0.0' }, 'Auth Module is ready to accept requests');
+    logger.info({ port: PORT, bind: '0.0.0.0', env: process.env.NODE_ENV || 'development' }, 'Auth Module is ready to accept requests');
     logger.info('============================================================');
   } else {
     logger.fatal('============================================================');
@@ -311,14 +363,14 @@ app.listen(PORT, '0.0.0.0', async (): Promise<void> => {
       logger.fatal('[ACTION REQUIRED] PostgreSQL connection failed. Check:');
       logger.fatal('  1. Is PostgreSQL Docker container running?');
       logger.fatal('  2. Is Tailscale connected?');
-      logger.fatal('  3. Are DB credentials correct in .env?');
+      logger.fatal('  3. Are DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME correct in .env?');
     }
 
     if (!redisOk) {
       logger.fatal('[ACTION REQUIRED] Redis connection failed. Check:');
       logger.fatal('  1. Is Redis Docker container running?');
       logger.fatal('  2. Is Tailscale connected?');
-      logger.fatal('  3. Are Redis credentials correct in .env?');
+      logger.fatal('  3. Are REDIS_HOST, REDIS_PORT, REDIS_PASSWORD correct in .env?');
     }
 
     logger.fatal('Server will now exit. Fix the issues and restart.');
