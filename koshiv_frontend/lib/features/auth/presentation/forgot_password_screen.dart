@@ -7,14 +7,16 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/forgot_password_screen.dart
  * Original File Version: 1.0.0
- * Current File Version: 1.1.0
+ * Current File Version: 1.2.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Forgot Password Screen — Email input with reset link dispatch
  * Version 1.1.0 | Added phone field, wired Step 1 API, navigates to OTP screen on success
+ * Version 1.2.0 | Added email_dispatched flag check — Only navigates to OTP screen when OTP actually sent, shows message and stays on screen when no account found
  * 
  * Aim: Secure Forgot Password Screen — Step 1 of 3
  * Why: Collects email and phone, sends OTP via backend.
- *      On success navigates to existing OTP verification screen in forgot password mode.
+ *      Validates email_dispatched flag before navigation.
+ *      If no account found or email failed, shows inline message and stays on screen.
  *      Security: Same generic message whether account exists or not.
  * ============================================================
  */
@@ -38,6 +40,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   bool _isLoading = false;
   String? _emailError;
   String? _phoneError;
+  String? _infoMessage;
+  bool _isInfoSuccess = false;
 
   @override
   void dispose() {
@@ -80,32 +84,42 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     final email = _emailController.text.trim();
     final phone = _phoneController.text.trim();
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _infoMessage = null;
+    });
 
     try {
-      await _authRepository.forgotPassword(email, phone);
+      final emailDispatched = await _authRepository.forgotPassword(email, phone);
       if (!mounted) return;
 
-      Navigator.push(
-        context,
-        PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 400),
-          pageBuilder: (_, __, ___) => OtpVerificationScreen(
-            email: email,
-            mode: OtpMode.forgotPassword,
+      if (emailDispatched) {
+        Navigator.push(
+          context,
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 400),
+            pageBuilder: (_, __, ___) => OtpVerificationScreen(
+              email: email,
+              mode: OtpMode.forgotPassword,
+            ),
+            transitionsBuilder: (_, animation, __, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(begin: const Offset(0.0, 0.08), end: Offset.zero)
+                      .animate(CurvedAnimation(parent: animation, curve: Curves.easeInOut)),
+                  child: child,
+                ),
+              );
+            },
           ),
-          transitionsBuilder: (_, animation, __, child) {
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: Tween<Offset>(begin: const Offset(0.0, 0.08), end: Offset.zero)
-                    .animate(CurvedAnimation(parent: animation, curve: Curves.easeInOut)),
-                child: child,
-              ),
-            );
-          },
-        ),
-      );
+        );
+      } else {
+        setState(() {
+          _infoMessage = 'No account found for these credentials. Please check and try again.';
+          _isInfoSuccess = false;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       final message = e.toString().replaceAll('Exception: ', '');
@@ -210,6 +224,40 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             ),
 
                             SizedBox(height: 24 * s),
+
+                            // Info Message (shown when email_dispatched = false)
+                            if (_infoMessage != null) ...[
+                              Container(
+                                padding: EdgeInsets.all(14 * s),
+                                margin: EdgeInsets.only(bottom: 18 * s),
+                                decoration: BoxDecoration(
+                                  color: _isInfoSuccess ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
+                                  borderRadius: BorderRadius.circular(12 * s),
+                                  border: Border.all(
+                                    color: _isInfoSuccess ? const Color(0xFFBBF7D0) : const Color(0xFFFECACA),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _isInfoSuccess ? Icons.check_circle_rounded : Icons.info_outline,
+                                      color: _isInfoSuccess ? const Color(0xFF16A34A) : const Color(0xFFEF4444),
+                                      size: 20,
+                                    ),
+                                    SizedBox(width: 10 * s),
+                                    Expanded(
+                                      child: Text(
+                                        _infoMessage!,
+                                        style: TextStyle(
+                                          fontSize: 12 * s,
+                                          color: _isInfoSuccess ? const Color(0xFF166534) : const Color(0xFFDC2626),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
 
                             // Email Input
                             TextField(
