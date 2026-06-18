@@ -7,16 +7,19 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/parent_registration_screen.dart
  * Original File Version: 1.0.0
+ * Current File Version: 1.3.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Parent Registration UI — Form fields for user data collection
  * Version 1.1.0 | Updated form fields per backend API spec — Added child_name (required), child_dob, child_grade (optional), restructured layout into Parent Details and Child Details sections
  * Version 1.1.1 | Added navigation to OtpVerificationScreen on successful validation
  * Version 1.2.0 | Integrated AuthRepository.registerInit API call with loading state and error handling
+ * Version 1.3.0 | Added real-time email format validation on focus loss — validates when user exits email field, not on screen open
  * 
  * Aim: Secure Parent Registration UI (Step 1) — Aligned with POST /api/v1/auth/register/init
  * Why: Collects parent_name, email, password (required), phone_number (optional)
  *      plus child_name (required), child_dob, child_grade (optional).
- *      On valid submission, calls registerInit API and navigates to OTP screen.
+ *      Real-time email validation on focus loss prevents invalid emails
+ *      before API call. Uses email_dispatched flag for OTP screen navigation.
  * ============================================================
  */
 
@@ -42,11 +45,42 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
   final AuthRepository _authRepository = AuthRepository();
 
+  final FocusNode _emailFocusNode = FocusNode();
+
   bool _obscurePassword = true;
   bool _isLoading = false;
+  String? _emailError;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailFocusNode.addListener(_onEmailFocusChange);
+  }
+
+  void _onEmailFocusChange() {
+    if (!_emailFocusNode.hasFocus) {
+      _validateEmail();
+    }
+  }
+
+  void _validateEmail() {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() => _emailError = null);
+      return;
+    }
+    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegex.hasMatch(email)) {
+      setState(() => _emailError = 'Please enter a valid email address');
+    } else {
+      setState(() => _emailError = null);
+    }
+  }
 
   @override
   void dispose() {
+    _emailFocusNode.removeListener(_onEmailFocusChange);
+    _emailFocusNode.dispose();
     _parentNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -69,6 +103,13 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     if (parentName.isEmpty || email.isEmpty || password.isEmpty || childName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill all required fields: Parent Name, Email, Password, and Child Name.')),
+      );
+      return;
+    }
+
+    if (_emailError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid email address.')),
       );
       return;
     }
@@ -156,11 +197,13 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
               TextField(
                 controller: _emailController,
+                focusNode: _emailFocusNode,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Email Address',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email_outlined),
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.email_outlined),
+                  errorText: _emailError,
                 ),
               ),
               const SizedBox(height: 16),
