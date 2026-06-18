@@ -7,9 +7,11 @@
  * Module: core_routing
  * File: lib/core/routes/app_routes.dart
  * Original File Version: 1.0.0
+ * Current File Version: 1.2.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial App Routes — Centralized named route constants
  * Version 1.1.0 | Added parentRegister route — Parent registration flow entry point
+ * Version 1.2.0 | Added forgotPassword route — Forgot password screen entry point
  * 
  * Aim: Centralized Route Name Management
  * Why: To maintain a single source of truth for all route names,
@@ -23,4 +25,5 @@ class AppRoutes {
   static const String parentLogin = '/parent-login';
   static const String studentLogin = '/student-login';
   static const String parentRegister = '/parent-register';
+  static const String forgotPassword = '/forgot-password';
 }
