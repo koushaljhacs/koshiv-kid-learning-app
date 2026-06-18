@@ -7,7 +7,7 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/parent_registration_screen.dart
  * Original File Version: 1.0.0
- * Current File Version: 1.4.0
+ * Current File Version: 1.5.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Parent Registration UI — Form fields for user data collection
  * Version 1.1.0 | Updated form fields per backend API spec — Added child_name (required), child_dob, child_grade (optional), restructured layout into Parent Details and Child Details sections
@@ -15,16 +15,17 @@
  * Version 1.2.0 | Integrated AuthRepository.registerInit API call with loading state and error handling
  * Version 1.3.0 | Added real-time email format validation on focus loss
  * Version 1.4.0 | Added inline email error display — red border + dynamic text for format errors and "Email already registered" API errors, no SnackBar for email
+ * Version 1.5.0 | Added real-time email availability check with 500ms debounce — shows green checkmark for valid+available, red error for invalid/registered while user types
  * 
  * Aim: Secure Parent Registration UI (Step 1) — Aligned with POST /api/v1/auth/register/init
- * Why: Real-time email validation on focus loss + API error displayed inline.
- *      Invalid format shows "Please enter a valid email address".
- *      409 conflict shows "Email already registered" directly on the field.
- *      Clean UX — no disruptive SnackBar for email-specific errors.
+ * Why: Real-time email validation while typing with 500ms debounce.
+ *      Green "Available" for free emails, red "Already registered" for taken emails.
+ *      Preserves Send OTP button validation as fallback.
  * ============================================================
  */
 
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../data/auth_repository.dart';
 import 'otp_verification_screen.dart';
 
@@ -50,41 +51,112 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
   bool _obscurePassword = true;
   bool _isLoading = false;
-  String? _emailFormatError;
-  String? _emailApiError;
+  String? _emailError;
+  bool _isEmailAvailable = false;
+  bool _isCheckingEmail = false;
+  bool _showEmailStatus = false;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
+    _emailController.addListener(_onEmailChanged);
     _emailFocusNode.addListener(_onEmailFocusChange);
   }
 
-  void _onEmailFocusChange() {
-    if (!_emailFocusNode.hasFocus) {
-      _validateEmailFormat();
-      // Clear API error when user edits email
-      if (_emailApiError != null) {
-        setState(() => _emailApiError = null);
+  void _onEmailChanged() {
+    _debounceTimer?.cancel();
+
+    final email = _emailController.text.trim();
+
+    if (email.isEmpty) {
+      setState(() {
+        _emailError = null;
+        _isCheckingEmail = false;
+        _showEmailStatus = false;
+        _isEmailAvailable = false;
+      });
+      return;
+    }
+
+    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegex.hasMatch(email)) {
+      setState(() {
+        _emailError = 'Please enter a valid email address';
+        _isCheckingEmail = false;
+        _showEmailStatus = false;
+        _isEmailAvailable = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isCheckingEmail = true;
+      _showEmailStatus = false;
+    });
+
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _checkEmailAvailability(email);
+    });
+  }
+
+  Future<void> _checkEmailAvailability(String email) async {
+    try {
+      final payload = {
+        'parent_name': '_check_',
+        'email': email,
+        'password': '_check_',
+        'child_name': '_check_',
+      };
+
+      await _authRepository.registerInit(payload);
+
+      if (!mounted) return;
+      setState(() {
+        _emailError = null;
+        _isCheckingEmail = false;
+        _isEmailAvailable = true;
+        _showEmailStatus = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final errorMsg = e.toString().replaceAll('Exception: ', '');
+
+      if (errorMsg.toLowerCase().contains('already registered') ||
+          errorMsg.toLowerCase().contains('already in progress')) {
+        setState(() {
+          _emailError = 'Email already registered';
+          _isCheckingEmail = false;
+          _isEmailAvailable = false;
+          _showEmailStatus = false;
+        });
+      } else {
+        setState(() {
+          _emailError = null;
+          _isCheckingEmail = false;
+          _isEmailAvailable = true;
+          _showEmailStatus = true;
+        });
       }
     }
   }
 
-  void _validateEmailFormat() {
-    final email = _emailController.text.trim();
-    if (email.isEmpty) {
-      setState(() => _emailFormatError = null);
-      return;
-    }
-    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-    if (!emailRegex.hasMatch(email)) {
-      setState(() => _emailFormatError = 'Please enter a valid email address');
-    } else {
-      setState(() => _emailFormatError = null);
+  void _onEmailFocusChange() {
+    if (!_emailFocusNode.hasFocus) {
+      final email = _emailController.text.trim();
+      if (email.isEmpty) {
+        setState(() {
+          _emailError = null;
+          _showEmailStatus = false;
+        });
+      }
     }
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
+    _emailController.removeListener(_onEmailChanged);
     _emailFocusNode.removeListener(_onEmailFocusChange);
     _emailFocusNode.dispose();
     _parentNameController.dispose();
@@ -106,9 +178,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     final childDob = _childDobController.text.trim();
     final childGrade = _childGradeController.text.trim();
 
-    // Clear previous API error
-    setState(() => _emailApiError = null);
-
     if (parentName.isEmpty || email.isEmpty || password.isEmpty || childName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill all required fields: Parent Name, Email, Password, and Child Name.')),
@@ -116,7 +185,10 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       return;
     }
 
-    if (_emailFormatError != null) {
+    if (_emailError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_emailError!)),
+      );
       return;
     }
 
@@ -149,10 +221,10 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     } catch (e) {
       if (!mounted) return;
       final errorMsg = e.toString().replaceAll('Exception: ', '');
-      
-      if (errorMsg.toLowerCase().contains('already registered') || 
+
+      if (errorMsg.toLowerCase().contains('already registered') ||
           errorMsg.toLowerCase().contains('already in progress')) {
-        setState(() => _emailApiError = 'Email already registered');
+        setState(() => _emailError = 'Email already registered');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(errorMsg)),
@@ -215,7 +287,24 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                   labelText: 'Email Address',
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.email_outlined),
-                  errorText: _emailFormatError ?? _emailApiError,
+                  errorText: _emailError,
+                  suffixIcon: _isCheckingEmail
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : _showEmailStatus && _isEmailAvailable
+                          ? const Padding(
+                              padding: EdgeInsets.all(14),
+                              child: Icon(Icons.check_circle, color: Colors.green, size: 20),
+                            )
+                          : null,
+                  helperText: _showEmailStatus && _isEmailAvailable ? 'Email is available' : null,
+                  helperStyle: const TextStyle(color: Colors.green, fontSize: 12),
                 ),
               ),
               const SizedBox(height: 16),
