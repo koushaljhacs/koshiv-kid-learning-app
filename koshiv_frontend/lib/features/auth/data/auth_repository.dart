@@ -7,18 +7,20 @@
  * Module: auth_data
  * File: lib/features/auth/data/auth_repository.dart
  * Original File Version: 1.0.0
- * Current File Version: 1.2.0
+ * Current File Version: 1.2.1
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth Repository — registerInit and registerComplete API calls
  * Version 1.0.1 | Added detailed error logging for DioException to aid debugging
  * Version 1.0.2 | Fixed endpoint paths — Added /auth prefix per backend routing
  * Version 1.1.0 | Added forgotPassword method — POST /auth/forgot-password endpoint
  * Version 1.2.0 | Added forgotPasswordVerifyOtp and forgotPasswordReset methods — Complete 3-step forgot password flow
+ * Version 1.2.1 | forgotPassword now returns bool via email_dispatched flag — Frontend can determine if OTP was actually sent
  * 
  * Aim: Auth API Data Layer
  * Why: Abstracts HTTP communication for auth endpoints.
  *      Handles registration and complete 3-step password reset flows
  *      with proper error handling and response parsing.
+ *      email_dispatched flag enables accurate UI flow control.
  * ============================================================
  */
 
@@ -70,8 +72,8 @@ class AuthRepository {
     }
   }
 
-  // Step 1: Request OTP for forgot password
-  Future<void> forgotPassword(String email, String phone) async {
+  // Step 1: Request OTP for forgot password — returns true if OTP dispatched
+  Future<bool> forgotPassword(String email, String phone) async {
     try {
       print('Forgot Password Request: email=$email, phone=$phone');
       final response = await _dio.post('/auth/forgot-password', data: {
@@ -80,6 +82,9 @@ class AuthRepository {
       });
       print('Forgot Password Success: ${response.statusCode}');
       print('Forgot Password Response: ${response.data}');
+
+      final emailDispatched = response.data['email_dispatched'] as bool? ?? false;
+      return emailDispatched;
     } on DioException catch (e) {
       print('DioException: ${e.type}');
       print('DioException Status Code: ${e.response?.statusCode}');
