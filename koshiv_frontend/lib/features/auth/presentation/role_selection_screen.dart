@@ -7,6 +7,7 @@
  * Module: auth_presentation
  * File: lib/features/auth/presentation/role_selection_screen.dart
  * Original File Version: 1.0.0
+ * Current File Version: 2.4.1
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Role Selection Screen
  * Version 1.1.0 | Wired Login as Parent button
@@ -15,8 +16,16 @@
  * Version 2.0.0 | Complete redesign — Glassmorphism theme
  * Version 2.1.0 | Added typewriter effect and pulse animation
  * Version 2.2.0 | Layout fixed using IntrinsicHeight
- * Version 2.3.0 | Figma Pro UI/UX Redesign — Premium Violet-Cyan gradient.
- * Version 2.4.0 | Solid White Cards — Smart blend workaround to perfectly camouflage JPG white backgrounds.
+ * Version 2.3.0 | Figma Pro UI/UX Redesign — Premium Violet-Cyan gradient
+ * Version 2.4.0 | Solid White Cards — Smart blend workaround for JPG white backgrounds
+ * Version 2.4.1 | Fixed Android system back button — now returns to role cards instead of exiting app
+ * 
+ * Aim: Unified Role Selection + Authentication Screen
+ * Why: Delightful animated entry with typewriter text and subtle pulse guide.
+ *      Premium Violet-Cyan gradient with solid white cards for clean avatar display.
+ *      Android back button properly handled to navigate back to role selection.
+ *      Dynamic responsive layout for all screen sizes.
+ *      Maintains strict RBAC and COPPA data isolation.
  * ============================================================
  */
 
@@ -161,24 +170,34 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
   double _responsiveFont(double size, BuildContext context) =>
       size * _scaleFactor(context);
 
-  @override
-  Widget build(BuildContext context) {
-    final scale = _scaleFactor(context);
+@override
+Widget build(BuildContext context) {
+  final scale = _scaleFactor(context);
 
-    return Scaffold(
+  return PopScope(
+    canPop: _selectedRole == null,
+    onPopInvokedWithResult: (didPop, result) {
+      if (!didPop && _selectedRole != null) {
+        _onBackToRoles();
+      }
+    },
+    child: Scaffold(
       body: Container(
         width: double.infinity,
         height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF7F7FD5), // Soft Violet
-              Color(0xFF86A8E7), // Clean Sky Blue
-              Color(0xFF91EAE4), // Fresh Cyan
+              Color(0xFFFDE47B),
+              Color(0xFFFF6B6B),
+              Color(0xFF87CEEB),
+              Color(0xFF4A8E9F),
+              Color(0xFF90EE90),
+              Color(0xFFFFFFFF),
             ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            stops: [0.0, 0.5, 1.0],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
           ),
         ),
         child: SafeArea(
@@ -187,8 +206,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen>
               : _buildLoginFormView(context, scale),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildRoleSelectionView(BuildContext context, double scale) {
     return SingleChildScrollView(
