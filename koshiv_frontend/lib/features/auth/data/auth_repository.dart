@@ -7,15 +7,16 @@
  * Module: auth_data
  * File: lib/features/auth/data/auth_repository.dart
  * Original File Version: 1.0.0
+ * Current File Version: 1.1.0
  * Complete Version Tracing:
  * Version 1.0.0 | Initial Auth Repository — registerInit and registerComplete API calls
  * Version 1.0.1 | Added detailed error logging for DioException to aid debugging
  * Version 1.0.2 | Fixed endpoint paths — Added /auth prefix per backend routing
+ * Version 1.1.0 | Added forgotPassword method — POST /auth/forgot-password endpoint
  * 
  * Aim: Auth API Data Layer
  * Why: Abstracts HTTP communication for auth endpoints.
- *      Handles POST /auth/register/init and POST /auth/register/complete
- *      with proper error extraction from DioException responses.
+ *      Handles registration and password reset flows with proper error handling.
  * ============================================================
  */
 
@@ -64,6 +65,27 @@ class AuthRepository {
     } catch (e) {
       print('Unexpected Error: $e');
       throw Exception('An unexpected error occurred.');
+    }
+  }
+
+  Future<void> forgotPassword(String email) async {
+    try {
+      print('Forgot Password Request: email=$email');
+      final response = await _dio.post('/auth/forgot-password', data: {
+        'email': email,
+      });
+      print('Forgot Password Success: ${response.statusCode}');
+      print('Forgot Password Response: ${response.data}');
+    } on DioException catch (e) {
+      print('DioException: ${e.type}');
+      print('DioException Status Code: ${e.response?.statusCode}');
+      print('DioException Response Data: ${e.response?.data}');
+      print('DioException Message: ${e.message}');
+      final message = e.response?.data?['error'] ?? 'Failed to process request. Please try again.';
+      throw Exception(message);
+    } catch (e) {
+      print('Unexpected Error: $e');
+      throw Exception('An unexpected error occurred. Please try again.');
     }
   }
 }
